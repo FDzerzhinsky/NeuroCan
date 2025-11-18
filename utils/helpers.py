@@ -1,5 +1,3 @@
-from operator import truediv
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -23,13 +21,14 @@ def visualize_prediction(image_path, predicted_angle, true_angle=None, confidenc
 
     return fig
 
+
 def calculate_angular_error(predicted, true):
     error = abs(predicted - true)
     return min(error, 360 - error)
 
 
 def load_model(checkpoint_path, num_classes=360):
-    from models import ResNetCanClassifier
+    from models.resnet_model import ResNetCanClassifier
     model = ResNetCanClassifier(num_classes=num_classes)
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
     model.load_state_dict(checkpoint['model_state_dict'])

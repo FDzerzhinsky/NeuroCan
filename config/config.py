@@ -10,12 +10,16 @@ class Config:
     BASE_DIR = Path(__file__).parent.parent
     DATA_DIR = BASE_DIR / "data"
     SNAPS_DIR = DATA_DIR / "snaps"
-    LABELS_FILE = DATA_DIR / "values.txt"
+    LABELS_FILE = SNAPS_DIR / "values.txt"
 
     # Модель
     MODEL_NAME = "resnet18"
     NUM_CLASSES = 360
     INPUT_SIZE = (256, 536)
+
+    # Настройки изображений
+    GRAYSCALE = True  # Изображения в градациях серого
+    INPUT_CHANNELS = 1 if GRAYSCALE else 3  # Автоматическое определение каналов
 
     # Обучение
     BATCH_SIZE = 32
@@ -37,6 +41,12 @@ class Config:
     def __init__(self):
         self.CHECKPOINT_DIR.mkdir(exist_ok=True)
         self.LOG_DIR.mkdir(exist_ok=True)
+
+        # Вывод информации о конфигурации
+        print(f"Конфигурация инициализирована:")
+        print(f"  - Режим: {'Grayscale' if self.GRAYSCALE else 'RGB'}")
+        print(f"  - Каналы: {self.INPUT_CHANNELS}")
+        print(f"  - Устройство: {self.DEVICE}")
 
 
 cfg = Config()

@@ -5,7 +5,7 @@ from tqdm import tqdm
 import numpy as np
 from pathlib import Path
 
-from config import cfg
+from config.config import cfg
 
 
 class CanRotationTrainer:

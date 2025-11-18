@@ -5,10 +5,11 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import argparse
 
-from config import cfg
-from data import SodaCanDataset, get_transforms
-from models import ResNetCanClassifier
-from training import CanRotationTrainer
+from config.config import cfg
+from data.dataset import SodaCanDataset
+from data.transforms import get_transforms
+from models.resnet_model import ResNetCanClassifier
+from training.trainer import CanRotationTrainer
 
 
 def main():
@@ -21,12 +22,15 @@ def main():
     print("Initializing Soda Can Rotation Training...")
     print(f"Device: {cfg.DEVICE}")
     print(f"Data directory: {cfg.SNAPS_DIR}")
+    print(f"Image mode: {'Grayscale' if cfg.GRAYSCALE else 'RGB'}")
+    print(f"Input channels: {cfg.INPUT_CHANNELS}")
 
     if not cfg.SNAPS_DIR.exists():
         raise FileNotFoundError(f"Data directory {cfg.SNAPS_DIR} not found!")
     if not cfg.LABELS_FILE.exists():
         raise FileNotFoundError(f"Labels file {cfg.LABELS_FILE} not found!")
 
+    # Создаем dataset с правильными трансформами
     full_dataset = SodaCanDataset(
         data_dir=cfg.SNAPS_DIR,
         labels_file=cfg.LABELS_FILE,
@@ -34,12 +38,15 @@ def main():
         transform=get_transforms('train')
     )
 
+    # Разделяем на train/val (80/20)
     train_size = int(0.8 * len(full_dataset))
     val_size = len(full_dataset) - train_size
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
 
+    # Устанавливаем трансформы для валидации
     val_dataset.dataset.transform = get_transforms('val')
 
+    # Создаем DataLoader'ы
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -59,11 +66,13 @@ def main():
     print(f"Train samples: {len(train_dataset)}")
     print(f"Val samples: {len(val_dataset)}")
 
+    # Создаем модель
     model = ResNetCanClassifier(
         num_classes=cfg.NUM_CLASSES,
         backbone=cfg.MODEL_NAME
     )
 
+    # Оптимизатор и scheduler
     optimizer = AdamW(
         model.parameters(),
         lr=args.lr,
@@ -72,6 +81,7 @@ def main():
 
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
+    # Тренер
     trainer = CanRotationTrainer(
         model=model,
         train_loader=train_loader,
@@ -81,6 +91,7 @@ def main():
         device=cfg.DEVICE
     )
 
+    # Запускаем обучение
     trainer.train(args.epochs)
 
     print("Training completed!")

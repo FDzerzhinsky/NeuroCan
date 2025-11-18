@@ -2,14 +2,25 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
 import cv2
-from config import cfg
 
 
 def get_transforms(phase='train'):
-    """Возвращает трансформы для обучения/валидации"""
+    """
+    Возвращает трансформы для обучения/валидации
+    Теперь поддерживает grayscale изображения
+    """
+    from config.config import cfg  # Импортируем здесь чтобы избежать циклических импортов
+
+    # Базовые трансформы которые применяются всегда
+    base_transforms = []
+
+    # Добавляем преобразование в grayscale если нужно
+    if cfg.GRAYSCALE:
+        base_transforms.append(A.ToGray(p=1.0))
 
     if phase == 'train':
-        return A.Compose([
+        # Аугментации для обучения
+        augmentations = [
             A.Affine(
                 rotate=(-cfg.MAX_TILT_ANGLE, cfg.MAX_TILT_ANGLE),
                 translate_percent=(-0.02, 0.02),
@@ -36,21 +47,24 @@ def get_transforms(phase='train'):
                 contrast_limit=0.1,
                 p=0.3
             ),
-            A.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            ),
-            ToTensorV2()
-        ])
+        ]
 
-    else:
-        return A.Compose([
-            A.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            ),
-            ToTensorV2()
-        ])
+        # Нормализация для grayscale или RGB
+        normalize = A.Normalize(
+            mean=[0.485] if cfg.GRAYSCALE else [0.485, 0.456, 0.406],
+            std=[0.229] if cfg.GRAYSCALE else [0.229, 0.224, 0.225]
+        )
+
+        return A.Compose(base_transforms + augmentations + [normalize, ToTensorV2()])
+
+    else:  # validation
+        # Только нормализация для валидации
+        normalize = A.Normalize(
+            mean=[0.485] if cfg.GRAYSCALE else [0.485, 0.456, 0.406],
+            std=[0.229] if cfg.GRAYSCALE else [0.229, 0.224, 0.225]
+        )
+
+        return A.Compose(base_transforms + [normalize, ToTensorV2()])
 
 
 class TiltAugmentation:
@@ -58,6 +72,10 @@ class TiltAugmentation:
 
     @staticmethod
     def apply_tilt(image, max_angle=3):
+        """
+        Применяет наклон к изображению банки
+        Работает как с grayscale, так и с RGB изображениями
+        """
         if max_angle == 0:
             return image
 
