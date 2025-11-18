@@ -1,0 +1,21 @@
+name: sreda_Neurocan
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pytorch=2.0.1
+  - torchvision=0.15.2
+  - cudatoolkit=11.8
+  - pytorch-cuda=11.8
+  - numpy
+  - matplotlib
+  - opencv
+  - pillow
+  - tqdm
+  - pip:
+    - albumentations
+    - tensorboard
