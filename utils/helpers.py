@@ -1,3 +1,5 @@
+from operator import truediv
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -20,7 +22,6 @@ def visualize_prediction(image_path, predicted_angle, true_angle=None, confidenc
     ax.axis('off')
 
     return fig
-
 
 def calculate_angular_error(predicted, true):
     error = abs(predicted - true)

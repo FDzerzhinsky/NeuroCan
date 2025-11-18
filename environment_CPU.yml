@@ -1,0 +1,19 @@
+name: sreda_NeurocanCPU
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pytorch=2.0.1
+  - torchvision=0.15.2
+  - cpuonly  # Заменяем cudatoolkit на cpuonly
+  - numpy
+  - matplotlib
+  - opencv
+  - pillow
+  - tqdm
+  - pip:
+    - albumentations
+    - tensorboard

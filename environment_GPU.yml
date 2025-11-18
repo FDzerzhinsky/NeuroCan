@@ -1,4 +1,4 @@
-name: sreda_Neurocan
+name: sreda_NeurocanGPU
 channels:
   - pytorch
   - nvidia
