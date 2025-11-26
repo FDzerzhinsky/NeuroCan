@@ -2,21 +2,24 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
 import cv2
+import warnings
+
+# Фильтруем конкретные предупреждения albumentations
+warnings.filterwarnings("ignore", message="The image is already gray.", category=UserWarning)
 
 
 def get_transforms(phase='train'):
     """
     Возвращает трансформы для обучения/валидации
-    Теперь поддерживает grayscale изображения
+    Теперь поддерживает grayscale изображения без лишних предупреждений
     """
-    from config.config import cfg  # Импортируем здесь чтобы избежать циклических импортов
+    from config.config import cfg
 
     # Базовые трансформы которые применяются всегда
     base_transforms = []
 
-    # Добавляем преобразование в grayscale если нужно
-    if cfg.GRAYSCALE:
-        base_transforms.append(A.ToGray(p=1.0))
+    # ВАЖНО: убираем A.ToGray() поскольку изображения уже в grayscale
+    # Это уберет предупреждения "The image is already gray"
 
     if phase == 'train':
         # Аугментации для обучения
@@ -29,30 +32,24 @@ def get_transforms(phase='train'):
                 p=0.8
             ),
             A.OneOf([
-                A.HueSaturationValue(
-                    hue_shift_limit=10,
-                    sat_shift_limit=20,
-                    val_shift_limit=10,
+                A.RandomGamma(gamma_limit=(80, 120), p=0.5),
+                A.RandomBrightnessContrast(
+                    brightness_limit=0.1,
+                    contrast_limit=0.1,
                     p=0.5
                 ),
-                A.RandomGamma(gamma_limit=(80, 120), p=0.5),
             ], p=0.5),
             A.OneOf([
                 A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
                 A.MotionBlur(blur_limit=3, p=0.3),
                 A.MedianBlur(blur_limit=3, p=0.3),
             ], p=0.3),
-            A.RandomBrightnessContrast(
-                brightness_limit=0.1,
-                contrast_limit=0.1,
-                p=0.3
-            ),
         ]
 
-        # Нормализация для grayscale или RGB
+        # Нормализация для grayscale
         normalize = A.Normalize(
-            mean=[0.485] if cfg.GRAYSCALE else [0.485, 0.456, 0.406],
-            std=[0.229] if cfg.GRAYSCALE else [0.229, 0.224, 0.225]
+            mean=[0.485],
+            std=[0.229]
         )
 
         return A.Compose(base_transforms + augmentations + [normalize, ToTensorV2()])
@@ -60,8 +57,8 @@ def get_transforms(phase='train'):
     else:  # validation
         # Только нормализация для валидации
         normalize = A.Normalize(
-            mean=[0.485] if cfg.GRAYSCALE else [0.485, 0.456, 0.406],
-            std=[0.229] if cfg.GRAYSCALE else [0.229, 0.224, 0.225]
+            mean=[0.485],
+            std=[0.229]
         )
 
         return A.Compose(base_transforms + [normalize, ToTensorV2()])

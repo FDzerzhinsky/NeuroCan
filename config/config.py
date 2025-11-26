@@ -19,7 +19,7 @@ class Config:
 
     # Настройки изображений
     GRAYSCALE = True  # Изображения в градациях серого
-    INPUT_CHANNELS = 1 if GRAYSCALE else 3  # Автоматическое определение каналов
+    INPUT_CHANNELS = 1 if GRAYSCALE else 3
 
     # Обучение
     BATCH_SIZE = 32
@@ -38,15 +38,22 @@ class Config:
     CHECKPOINT_DIR = BASE_DIR / "checkpoints"
     LOG_DIR = BASE_DIR / "logs"
 
+    # Добавляем флаг для отслеживания инициализации
+    _initialized = False
+
     def __init__(self):
-        self.CHECKPOINT_DIR.mkdir(exist_ok=True)
-        self.LOG_DIR.mkdir(exist_ok=True)
+        if not self._initialized:
+            self.CHECKPOINT_DIR.mkdir(exist_ok=True)
+            self.LOG_DIR.mkdir(exist_ok=True)
 
-        # Вывод информации о конфигурации
-        print(f"Конфигурация инициализирована:")
-        print(f"  - Режим: {'Grayscale' if self.GRAYSCALE else 'RGB'}")
-        print(f"  - Каналы: {self.INPUT_CHANNELS}")
-        print(f"  - Устройство: {self.DEVICE}")
+            # Вывод информации о конфигурации только один раз
+            print("Конфигурация инициализирована:")
+            print(f"  - Режим: {'Grayscale' if self.GRAYSCALE else 'RGB'}")
+            print(f"  - Каналы: {self.INPUT_CHANNELS}")
+            print(f"  - Устройство: {self.DEVICE}")
+
+            Config._initialized = True
 
 
+# Создаем глобальный экземпляр
 cfg = Config()

@@ -37,6 +37,14 @@ class SodaCanDataset(Dataset):
                     filename = match.group(1)
                     angle = int(match.group(2))
 
+                    # ИСПРАВЛЕНИЕ: заменяем 360 на 0 (т.к. у нас классы 0-359)
+                    if angle == 360:
+                        angle = 0
+                    # Также проверяем, что угол в допустимом диапазоне
+                    if angle < 0 or angle >= 360:
+                        print(f"Warning: Invalid angle {angle} in {filename}, skipping")
+                        continue
+
                     # Проверяем существование файла (поддерживаем разные форматы)
                     for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
                         img_path = self.data_dir / f"{filename}{ext}"
@@ -46,29 +54,29 @@ class SodaCanDataset(Dataset):
                     else:
                         print(f"Warning: {filename} not found with common extensions")
 
+        # Дополнительная проверка: выводим информацию об углах
+        angles = [angle for _, angle in samples]
+        print(f"Angle range: {min(angles)}-{max(angles)}")
+        print(f"Unique angles: {len(set(angles))}")
+
         return samples
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        from config.config import cfg  # Импортируем здесь
+        from config.config import cfg
 
         img_path, angle = self.samples[idx]
 
         # Загружаем изображение
-        # cv2.imread всегда возвращает BGR, преобразуем в RGB или Grayscale
-        image = cv2.imread(str(img_path))
+        image = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)  # Сразу загружаем как grayscale
 
-        # Преобразуем в правильное цветовое пространство
-        if cfg.GRAYSCALE:
-            # Для grayscale - конвертируем в одноканальное
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            # Добавляем канальное измерение если нужно (H, W) -> (H, W, 1)
-            image = np.expand_dims(image, axis=-1)
-        else:
-            # Для RGB - конвертируем BGR в RGB
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if image is None:
+            raise ValueError(f"Не удалось загрузить изображение: {img_path}")
+
+        # Добавляем канальное измерение (H, W) -> (H, W, 1)
+        image = np.expand_dims(image, axis=-1)
 
         # Применяем специальную аугментацию наклона
         if self.phase == 'train' and self.tilt_augmentation:
@@ -78,7 +86,7 @@ class SodaCanDataset(Dataset):
         if self.transform:
             image = self.transform(image=image)['image']
 
-        # Преобразуем угол в циклические координаты для возможного использования
+        # Преобразуем угол в циклические координаты
         angle_rad = torch.tensor(angle) * 2 * torch.pi / 360
         sin_target = torch.sin(angle_rad)
         cos_target = torch.cos(angle_rad)

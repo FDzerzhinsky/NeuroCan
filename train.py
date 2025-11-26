@@ -1,15 +1,17 @@
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
-import argparse
-
 from config.config import cfg
 from data.dataset import SodaCanDataset
 from data.transforms import get_transforms
 from models.resnet_model import ResNetCanClassifier
 from training.trainer import CanRotationTrainer
+
+from torch.utils.data import DataLoader, random_split
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
+import argparse
+import warnings
+
+# Фильтруем лишние предупреждения
+warnings.filterwarnings("ignore")
 
 
 def main():

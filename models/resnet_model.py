@@ -61,6 +61,7 @@ class ResNetCanClassifier(BaseModel):
         )
 
         print(f"✅ Модель инициализирована с {cfg.INPUT_CHANNELS} входными каналами")
+        print(f"✅ Количество классов: {num_classes}")
 
     def forward(self, x):
         return self.backbone(x)
@@ -69,5 +70,15 @@ class ResNetCanClassifier(BaseModel):
         """Предсказывает угол в градусах"""
         with torch.no_grad():
             logits = self.forward(x)
+
+            # Дополнительная проверка на валидность предсказаний
+            if torch.any(logits != logits):  # проверка на NaN
+                print("Warning: NaN detected in model output")
+
             predicted_class = torch.argmax(logits, dim=1)
+
+            # Проверяем, что предсказания в допустимом диапазоне
+            if torch.any(predicted_class < 0) or torch.any(predicted_class >= self.num_classes):
+                print(f"Warning: Invalid predictions: {predicted_class}")
+
             return predicted_class.float()
