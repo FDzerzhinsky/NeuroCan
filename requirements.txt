@@ -1,0 +1,8 @@
+torch
+onnx
+onnxruntime
+pyqtgraph
+PySide6
+numpy
+opencv-python
+

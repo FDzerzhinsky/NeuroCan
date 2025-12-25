@@ -1,10 +1,9 @@
 import torch
-import os
 from pathlib import Path
 
 
 class Config:
-    """Конфигурация проекта"""
+    """Конфигурация проекта (без сайд-эффектов при импорте)."""
 
     # Пути
     BASE_DIR = Path(__file__).parent.parent
@@ -37,23 +36,27 @@ class Config:
     # Сохранение
     CHECKPOINT_DIR = BASE_DIR / "checkpoints"
     LOG_DIR = BASE_DIR / "logs"
-
-    # Добавляем флаг для отслеживания инициализации
-    _initialized = False
+    DEFAULT_ONNX_DIR = BASE_DIR / "onnx"
 
     def __init__(self):
-        if not self._initialized:
-            self.CHECKPOINT_DIR.mkdir(exist_ok=True)
-            self.LOG_DIR.mkdir(exist_ok=True)
+        # Никаких mkdir или print в __init__ — явная инициализация через ensure_dirs()
+        self._dirs_ensured = False
 
-            # Вывод информации о конфигурации только один раз
-            print("Конфигурация инициализирована:")
-            print(f"  - Режим: {'Grayscale' if self.GRAYSCALE else 'RGB'}")
-            print(f"  - Каналы: {self.INPUT_CHANNELS}")
-            print(f"  - Устройство: {self.DEVICE}")
+    def ensure_dirs(self):
+        """Создаёт необходимые директории (вызывать явным образом из CLI/GUI)."""
+        self.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+        self.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        self.DEFAULT_ONNX_DIR.mkdir(parents=True, exist_ok=True)
+        self._dirs_ensured = True
 
-            Config._initialized = True
+    def device_info(self):
+        return {
+            'device': self.DEVICE,
+            'num_workers': self.NUM_WORKERS,
+            'grayscale': self.GRAYSCALE,
+            'input_channels': self.INPUT_CHANNELS
+        }
 
 
-# Создаем глобальный экземпляр
+# Создаем глобальный экземпляр (без побочных эффектов)
 cfg = Config()

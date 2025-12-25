@@ -7,6 +7,7 @@ from pathlib import Path
 
 from config.config import cfg
 
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -29,7 +30,22 @@ class CanRotationTrainer:
         self.criterion = nn.CrossEntropyLoss()
         self.best_accuracy = 0.0
 
+        # Для интеграции с GUI
+        self.last_train_loss = 0.0
+        self.last_train_acc = 0.0
+        self.last_val_loss = 0.0
+        self.last_val_acc = 0.0
+
+        # Флаг для запроса остановки
+        self._stop_requested = False
+        self._current_epoch = None
+
+    def request_stop(self):
+        """Запрос на остановку обучения (безопасный)"""
+        self._stop_requested = True
+
     def train_epoch(self, epoch):
+        self._current_epoch = epoch
         self.model.train()
         total_loss = 0
         correct = 0
@@ -41,6 +57,16 @@ class CanRotationTrainer:
                     leave=False)
 
         for batch in pbar:
+            # Проверяем запрос остановки между батчами
+            if self._stop_requested:
+                print(f"Stop requested - interrupting epoch {epoch}")
+                # Сохраняем текущий чекпоинт как последний
+                try:
+                    self.save_checkpoint(epoch, is_best=False)
+                except Exception as e:
+                    print(f"Error saving checkpoint on stop: {e}")
+                break
+
             images = batch['image'].to(self.device)
             angles = batch['angle'].to(self.device)
             # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: убедимся, что углы в правильном диапазоне
@@ -66,8 +92,17 @@ class CanRotationTrainer:
                 'acc': f'{100 * correct / total:5.1f}%'
             })
 
-        avg_loss = total_loss / len(self.train_loader)
-        accuracy = 100 * correct / total
+        # Если не было батчей обработано (например остановились до начала) защитимся от деления на ноль
+        if total == 0:
+            avg_loss = 0.0
+            accuracy = 0.0
+        else:
+            avg_loss = total_loss / len(self.train_loader)
+            accuracy = 100 * correct / total
+
+        # Сохраняем последние метрики для GUI
+        self.last_train_loss = avg_loss
+        self.last_train_acc = accuracy
 
         return avg_loss, accuracy
 
@@ -83,6 +118,11 @@ class CanRotationTrainer:
                         leave=False)
 
             for batch in pbar:
+                # Проверяем запрос остановки также и в валидации
+                if self._stop_requested:
+                    print(f"Stop requested - interrupting validation for epoch {epoch}")
+                    break
+
                 images = batch['image'].to(self.device)
                 angles = batch['angle'].to(self.device)
 
@@ -99,8 +139,16 @@ class CanRotationTrainer:
                     'acc': f'{100 * correct / total:5.1f}%'
                 })
 
-        avg_loss = total_loss / len(self.val_loader)
-        accuracy = 100 * correct / total
+        if total == 0:
+            avg_loss = 0.0
+            accuracy = 0.0
+        else:
+            avg_loss = total_loss / len(self.val_loader)
+            accuracy = 100 * correct / total
+
+        # Сохраняем последние метрики для GUI
+        self.last_val_loss = avg_loss
+        self.last_val_acc = accuracy
 
         return avg_loss, accuracy
 
@@ -108,13 +156,29 @@ class CanRotationTrainer:
         print(f"Starting training for {num_epochs} epochs on {self.device}")
 
         for epoch in range(1, num_epochs + 1):
+            if self._stop_requested:
+                print("Stop requested - exiting training loop")
+                break
+
             train_loss, train_acc = self.train_epoch(epoch)
+
+            # Если останов был запрошен внутри train_epoch — прерываем и не запускаем валидацию
+            if self._stop_requested:
+                print("Stop was requested during train_epoch, breaking before validation")
+                break
+
             val_loss, val_acc = self.validate_epoch(epoch)
             self.scheduler.step()
 
             if val_acc > self.best_accuracy:
                 self.best_accuracy = val_acc
                 self.save_checkpoint(epoch, is_best=True)
+
+            # Обновляем последние метрики
+            self.last_train_loss = train_loss
+            self.last_train_acc = train_acc
+            self.last_val_loss = val_loss
+            self.last_val_acc = val_acc
 
             # Чистый вывод без лишней информации
             print(f'Epoch {epoch:3d}/{num_epochs}: '
@@ -131,7 +195,13 @@ class CanRotationTrainer:
             'best_accuracy': self.best_accuracy
         }
 
+        # Всегда сохраняем checkpoint с номером эпохи
+        filename = cfg.CHECKPOINT_DIR / f'checkpoint_epoch_{epoch}.pth'
+        torch.save(checkpoint, filename)
+
         if is_best:
             best_filename = cfg.CHECKPOINT_DIR / 'best_model.pth'
             torch.save(checkpoint, best_filename)
             print(f"Saved best model with accuracy {self.best_accuracy:.2f}%")
+        else:
+            print(f"Saved checkpoint: {filename}")

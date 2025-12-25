@@ -7,19 +7,43 @@ import re
 
 
 class SodaCanDataset(Dataset):
-    """Dataset для банок газировки с поддержкой grayscale"""
+    """Dataset для банок газировки с поддержкой grayscale.
 
-    def __init__(self, data_dir, labels_file, phase='train', transform=None):
+    Параметры:
+    - data_dir: папка с изображениями
+    - labels_file: путь к файлу разметки (опционально). Если None, автоматически ищем labels.txt или values.txt в data_dir.
+    """
+
+    def __init__(self, data_dir, labels_file=None, phase='train', transform=None):
         self.data_dir = Path(data_dir)
         self.phase = phase
         self.transform = transform
-        self.samples = self._load_labels(labels_file)
+
+        # Определяем файл разметки
+        if labels_file is None:
+            # Проверяем в самой папке data_dir
+            candidate1 = self.data_dir / 'labels.txt'
+            candidate2 = self.data_dir / 'values.txt'
+            if candidate1.exists():
+                labels_file = candidate1
+            elif candidate2.exists():
+                labels_file = candidate2
+            else:
+                # Если не найдено — пробуем глобально настроенный путь (оставляем старую совместимость)
+                from config.config import cfg
+                if cfg.LABELS_FILE.exists():
+                    labels_file = cfg.LABELS_FILE
+                else:
+                    raise FileNotFoundError(f"Labels file not found in {self.data_dir}. Expected 'labels.txt' or 'values.txt'.")
+
+        self.labels_file = Path(labels_file)
+        self.samples = self._load_labels(self.labels_file)
 
         # Импортируем здесь чтобы избежать циклических импортов
         from data.transforms import TiltAugmentation
         self.tilt_augmentation = TiltAugmentation() if phase == 'train' else None
 
-        print(f"Loaded {len(self.samples)} samples for {phase}")
+        print(f"Loaded {len(self.samples)} samples for {phase} (labels: {self.labels_file})")
 
     def _load_labels(self, labels_file):
         """Загружает разметку из файла"""
@@ -54,10 +78,14 @@ class SodaCanDataset(Dataset):
                     else:
                         print(f"Warning: {filename} not found with common extensions")
 
+        if not samples:
+            raise RuntimeError(f"No samples loaded from labels file {labels_file}. Check your dataset and labels.")
+
         # Дополнительная проверка: выводим информацию об углах
         angles = [angle for _, angle in samples]
-        print(f"Angle range: {min(angles)}-{max(angles)}")
-        print(f"Unique angles: {len(set(angles))}")
+        if angles:
+            print(f"Angle range: {min(angles)}-{max(angles)}")
+            print(f"Unique angles: {len(set(angles))}")
 
         return samples
 
