@@ -56,7 +56,7 @@ class CanRotationTrainer:
                     bar_format='{l_bar}{bar:20}{r_bar}{bar:-20b}',
                     leave=False)
 
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar):
             # Проверяем запрос остановки между батчами
             if self._stop_requested:
                 print(f"Stop requested - interrupting epoch {epoch}")
@@ -69,6 +69,17 @@ class CanRotationTrainer:
 
             images = batch['image'].to(self.device)
             angles = batch['angle'].to(self.device)
+            # Приводим метки к long (тип, ожидаемый CrossEntropyLoss)
+            angles = angles.long()
+
+            # Debug: для первой эпохи и первого батча выведем типы/примеры
+            if epoch == 1 and batch_idx == 0:
+                try:
+                    print(f"[DEBUG] batch types: images={images.dtype}, angles={angles.dtype}")
+                    print(f"[DEBUG] sample angles: {angles[:10].cpu().numpy()}")
+                except Exception:
+                    pass
+
             # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: убедимся, что углы в правильном диапазоне
             if torch.any(angles < 0) or torch.any(angles >= self.model.num_classes):
                 invalid_indices = torch.where((angles < 0) | (angles >= self.model.num_classes))[0]
@@ -83,8 +94,18 @@ class CanRotationTrainer:
 
             total_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
+
+            # Debug: в первом батче выведем примеры predicted
+            if epoch == 1 and batch_idx == 0:
+                try:
+                    print(f"[DEBUG] sample predicted: {predicted[:10].cpu().numpy()}")
+                except Exception:
+                    pass
+
             total += angles.size(0)
-            correct += (predicted == angles).sum().item()
+            # Убедимся, что сравниваем одинаковые типы
+            correct_batch = (predicted == angles).sum().item()
+            correct += correct_batch
 
             # Обновляем прогресс без лишней информации
             pbar.set_postfix({
@@ -117,7 +138,7 @@ class CanRotationTrainer:
                         bar_format='{l_bar}{bar:20}{r_bar}{bar:-20b}',
                         leave=False)
 
-            for batch in pbar:
+            for batch_idx, batch in enumerate(pbar):
                 # Проверяем запрос остановки также и в валидации
                 if self._stop_requested:
                     print(f"Stop requested - interrupting validation for epoch {epoch}")
@@ -125,12 +146,30 @@ class CanRotationTrainer:
 
                 images = batch['image'].to(self.device)
                 angles = batch['angle'].to(self.device)
+                # Приводим метки к long для валидации
+                angles = angles.long()
+
+                # Debug: для первой эпохи и первого батча выведем типы/примеры
+                if epoch == 1 and batch_idx == 0:
+                    try:
+                        print(f"[DEBUG VAL] batch types: images={images.dtype}, angles={angles.dtype}")
+                        print(f"[DEBUG VAL] sample angles: {angles[:10].cpu().numpy()}")
+                    except Exception:
+                        pass
 
                 outputs = self.model(images)
                 loss = self.criterion(outputs, angles)
 
                 total_loss += loss.item()
                 _, predicted = torch.max(outputs.data, 1)
+
+                # Debug: в первом батче валидации выведем примеры predicted
+                if epoch == 1 and batch_idx == 0:
+                    try:
+                        print(f"[DEBUG VAL] sample predicted: {predicted[:10].cpu().numpy()}")
+                    except Exception:
+                        pass
+
                 total += angles.size(0)
                 correct += (predicted == angles).sum().item()
 
@@ -192,7 +231,8 @@ class CanRotationTrainer:
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
-            'best_accuracy': self.best_accuracy
+            'best_accuracy': self.best_accuracy,
+            'epoch_val_acc': getattr(self, 'last_val_acc', None)
         }
 
         # Всегда сохраняем checkpoint с номером эпохи
@@ -202,6 +242,6 @@ class CanRotationTrainer:
         if is_best:
             best_filename = cfg.CHECKPOINT_DIR / 'best_model.pth'
             torch.save(checkpoint, best_filename)
-            print(f"Saved best model with accuracy {self.best_accuracy:.2f}%")
+            print(f"Saved best model with accuracy {self.best_accuracy:.2f}% (epoch {epoch})")
         else:
             print(f"Saved checkpoint: {filename}")

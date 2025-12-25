@@ -7,7 +7,8 @@ from pathlib import Path
 
 
 class TrainingWorker(QThread):
-    epoch_signal = Signal(int, float, float)  # epoch, train_loss, val_loss
+    # epoch, train_loss, val_loss, train_acc, val_acc
+    epoch_signal = Signal(int, float, float, float, float)
 
     def __init__(self, dataset_path, epochs, batch_size, lr, parent=None):
         super().__init__(parent)
@@ -93,7 +94,10 @@ class TrainingWorker(QThread):
             # Эмиссия сигнала с актуальными метриками
             train_loss = getattr(self.trainer, 'last_train_loss', train_loss)
             val_loss = getattr(self.trainer, 'last_val_loss', val_loss)
-            self.epoch_signal.emit(epoch, train_loss, val_loss)
+            train_acc = getattr(self.trainer, 'last_train_acc', train_acc)
+            val_acc = getattr(self.trainer, 'last_val_acc', val_acc)
+            # Emit epoch, train_loss, val_loss, train_acc, val_acc
+            self.epoch_signal.emit(epoch, train_loss, val_loss, train_acc, val_acc)
 
             # Проверка локального флага на случай stop
             if self._stop_requested:
