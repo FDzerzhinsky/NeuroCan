@@ -84,10 +84,18 @@ class TrainingWorker(QThread):
                 pass
 
             # Сохранение лучшей модели
-            if val_acc > self.trainer.best_accuracy:
+            # Новая логика сохранения: сохраняем, если ИЛИ улучшилась accuracy, ИЛИ уменьшился val_loss
+            improved_acc = val_acc > getattr(self.trainer, 'best_accuracy', 0.0)
+            improved_loss = val_loss < getattr(self.trainer, 'best_val_loss', float('inf'))
+
+            if improved_acc:
                 self.trainer.best_accuracy = val_acc
+            if improved_loss:
+                self.trainer.best_val_loss = val_loss
+
+            if improved_acc or improved_loss:
                 try:
-                    self.trainer.save_checkpoint(epoch, is_best=True)
+                    self.trainer.save_checkpoint(epoch, is_best_acc=improved_acc, is_best_loss=improved_loss)
                 except Exception:
                     pass
 

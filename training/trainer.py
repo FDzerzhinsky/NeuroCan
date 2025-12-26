@@ -29,6 +29,8 @@ class CanRotationTrainer:
 
         self.criterion = nn.CrossEntropyLoss()
         self.best_accuracy = 0.0
+        # Лучшее значение по валидационной функции потерь (минимизируем)
+        self.best_val_loss = float('inf')
 
         # Для интеграции с GUI
         self.last_train_loss = 0.0
@@ -209,9 +211,18 @@ class CanRotationTrainer:
             val_loss, val_acc = self.validate_epoch(epoch)
             self.scheduler.step()
 
-            if val_acc > self.best_accuracy:
+            # Новая логика сохранения: сохраняем, если ИЛИ улучшилась accuracy, ИЛИ уменьшился val_loss
+            improved_acc = val_acc > self.best_accuracy
+            improved_loss = val_loss < self.best_val_loss
+
+            if improved_acc:
                 self.best_accuracy = val_acc
-                self.save_checkpoint(epoch, is_best=True)
+            if improved_loss:
+                self.best_val_loss = val_loss
+
+            # Если есть улучшение по любой из метрик — сохраняем чекпоинт и соответствующие лучшие файлы
+            if improved_acc or improved_loss:
+                self.save_checkpoint(epoch, is_best_acc=improved_acc, is_best_loss=improved_loss)
 
             # Обновляем последние метрики
             self.last_train_loss = train_loss
@@ -223,25 +234,50 @@ class CanRotationTrainer:
             print(f'Epoch {epoch:3d}/{num_epochs}: '
                   f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:5.1f}% | '
                   f'Val Loss: {val_loss:.4f}, Val Acc: {val_acc:5.1f}% | '
-                  f'Best: {self.best_accuracy:5.1f}%')
+                  f'Best Acc: {self.best_accuracy:5.1f}%, Best Val Loss: {self.best_val_loss:.4f}')
 
-    def save_checkpoint(self, epoch, is_best=False):
+    def save_checkpoint(self, epoch, is_best=False, is_best_acc=False, is_best_loss=False):
+        """Сохраняет чекпоинт эпохи и при необходимости обновляет файлы лучших моделей.
+
+        Поддерживаются вызовы старого API: save_checkpoint(epoch, is_best=True)
+        в этом случае считается, что улучшилась accuracy.
+        """
+        # Поддерживаем обратную совместимость: старый параметр is_best интерпретируем как is_best_acc
+        if isinstance(is_best, bool) and is_best:
+            is_best_acc = True
+        elif isinstance(is_best, dict):
+            is_best_acc = is_best.get('acc', is_best_acc)
+            is_best_loss = is_best.get('loss', is_best_loss)
+
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'best_accuracy': self.best_accuracy,
-            'epoch_val_acc': getattr(self, 'last_val_acc', None)
+            'best_val_loss': getattr(self, 'best_val_loss', None),
+            'epoch_val_acc': getattr(self, 'last_val_acc', None),
+            'epoch_val_loss': getattr(self, 'last_val_loss', None)
         }
 
-        # Всегда сохраняем checkpoint с номером эпохи
+        # Всегда сохраняем checkpoint с номером эпохи (чтобы не терять прогресс при прерывании)
         filename = cfg.CHECKPOINT_DIR / f'checkpoint_epoch_{epoch}.pth'
         torch.save(checkpoint, filename)
 
-        if is_best:
+        # Сохраняем лучшие по accuracy и по loss в отдельные файлы
+        if is_best_acc:
+            best_acc_filename = cfg.CHECKPOINT_DIR / 'best_model_acc.pth'
+            torch.save(checkpoint, best_acc_filename)
+            # Сохраним также старый путь best_model.pth для обратной совместимости
             best_filename = cfg.CHECKPOINT_DIR / 'best_model.pth'
             torch.save(checkpoint, best_filename)
-            print(f"Saved best model with accuracy {self.best_accuracy:.2f}% (epoch {epoch})")
-        else:
+            print(f"Saved best model by accuracy {self.best_accuracy:.2f}% (epoch {epoch})")
+
+        if is_best_loss:
+            best_loss_filename = cfg.CHECKPOINT_DIR / 'best_model_loss.pth'
+            torch.save(checkpoint, best_loss_filename)
+            print(f"Saved best model by val_loss {self.best_val_loss:.4f} (epoch {epoch})")
+
+        # Если не было ни одного флага, просто логируем сохранение эпохи
+        if (not is_best_acc) and (not is_best_loss):
             print(f"Saved checkpoint: {filename}")

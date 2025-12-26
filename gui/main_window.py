@@ -286,14 +286,23 @@ class MainWindow(QMainWindow):
                 ck = torch.load(str(f), map_location='cpu')
                 epoch = ck.get('epoch') if isinstance(ck, dict) else None
                 best_acc = ck.get('best_accuracy') if isinstance(ck, dict) else None
+                best_loss = ck.get('best_val_loss') if isinstance(ck, dict) else None
                 epoch_val_acc = ck.get('epoch_val_acc') if isinstance(ck, dict) else None
+                epoch_val_loss = ck.get('epoch_val_loss') if isinstance(ck, dict) else None
                 parts = []
                 if epoch is not None:
                     parts.append(f'ep={epoch}')
+                # Показываем приоритетно значения для данной эпохи (epoch_val_*), если их нет — используем best_*
                 if epoch_val_acc is not None:
-                    parts.append(f'val={epoch_val_acc:.2f}%')
+                    parts.append(f'val_acc={epoch_val_acc:.2f}%')
                 elif best_acc is not None:
-                    parts.append(f'best={best_acc:.2f}%')
+                    parts.append(f'best_acc={best_acc:.2f}%')
+
+                if epoch_val_loss is not None:
+                    parts.append(f'val_loss={epoch_val_loss:.4f}')
+                elif best_loss is not None:
+                    parts.append(f'best_loss={best_loss:.4f}')
+
                 if parts:
                     display = f"{f.name} — {' | '.join(parts)}"
                     tooltip = ', '.join(parts)

@@ -107,7 +107,7 @@ class TiltAugmentation:
     """Специальная аугментация наклона банки"""
 
     @staticmethod
-    def apply_tilt(image, max_angle=3, angle: float = None):
+    def apply_tilt(image, max_angle=1.5, angle: float = None):
         """
         Применяет наклон (поворот) к изображению банки.
         Если параметр angle задан (в градусах), применяется именно он; иначе выбирается случайный угол в диапазоне [-max_angle, max_angle].

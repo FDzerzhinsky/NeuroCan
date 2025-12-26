@@ -97,7 +97,12 @@ def main():
     trainer.train(args.epochs)
 
     print("Training completed!")
+    # Выводим оба лучших результата (по accuracy и по val_loss)
     print(f"Best validation accuracy: {trainer.best_accuracy:.2f}%")
+    try:
+        print(f"Best validation loss: {trainer.best_val_loss:.4f}")
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':
