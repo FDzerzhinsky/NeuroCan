@@ -42,7 +42,14 @@ class MainWindow(QMainWindow):
 
     def _build_training_tab(self):
         tab = QWidget()
-        layout = QVBoxLayout()
+        # Основной вертикальный контейнер: сверху — управление + панель аугментаций, снизу — графики
+        main_v = QVBoxLayout()
+
+        # ВЕРХНИЙ РЯД: поля/кнопки (слева) и панель аугментаций (справа)
+        top_row = QHBoxLayout()
+
+        # Левая колонка верхнего ряда: форма и кнопки
+        left_controls = QVBoxLayout()
 
         form = QFormLayout()
         self.dataset_path_edit = QLineEdit()
@@ -63,8 +70,9 @@ class MainWindow(QMainWindow):
         device_info = cfg.device_info()
         dev_text = 'GPU доступна' if device_info['device'] == 'cuda' else 'GPU недоступна, обучение на CPU'
         self.device_label = QLabel(f"Устройство: {device_info['device']} ({dev_text})")
-        layout.addLayout(form)
-        layout.addWidget(self.device_label)
+
+        left_controls.addLayout(form)
+        left_controls.addWidget(self.device_label)
 
         # Start/Stop
         self.start_btn = QPushButton('Запустить обучение')
@@ -73,10 +81,137 @@ class MainWindow(QMainWindow):
         self.stop_btn.clicked.connect(self._stop_training)
         self.stop_btn.setEnabled(False)
 
-        layout.addWidget(self.start_btn)
-        layout.addWidget(self.stop_btn)
+        # Кнопки в компактном горизонтальном ряду
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.start_btn)
+        btn_row.addWidget(self.stop_btn)
+        left_controls.addLayout(btn_row)
 
-        # Два графика в одной строке: слева Accuracy, справа Loss
+        # Добавляем левый контрол в верхний ряд
+        top_row.addLayout(left_controls, 3)
+
+        # Правая колонка верхнего ряда: параметры аугментации
+        right_col_widget = QWidget()
+        right_col = QVBoxLayout()
+        from PySide6.QtWidgets import QGroupBox, QDoubleSpinBox
+
+        aug_group = QGroupBox('Параметры аугментации')
+        aug_form = QFormLayout()
+
+        # MAX_TILT_ANGLE (int)
+        self.max_tilt_spin = QSpinBox()
+        self.max_tilt_spin.setRange(0, 45)
+        self.max_tilt_spin.setValue(cfg.MAX_TILT_ANGLE)
+        self.max_tilt_spin.valueChanged.connect(lambda v: setattr(cfg, 'MAX_TILT_ANGLE', int(v)))
+        aug_form.addRow('Максимальный угол тильта (°):', self.max_tilt_spin)
+
+        # VERTICAL_SHIFT_PERCENT (float)
+        self.vert_shift_spin = QDoubleSpinBox()
+        self.vert_shift_spin.setDecimals(3)
+        self.vert_shift_spin.setRange(0.0, 0.5)
+        self.vert_shift_spin.setSingleStep(0.005)
+        self.vert_shift_spin.setValue(cfg.VERTICAL_SHIFT_PERCENT)
+        self.vert_shift_spin.valueChanged.connect(lambda v: setattr(cfg, 'VERTICAL_SHIFT_PERCENT', float(v)))
+        aug_form.addRow('Вертикальный сдвиг (доля высоты):', self.vert_shift_spin)
+
+        # Вероятности аугментаций
+        self.aug_p_vertical_spin = QDoubleSpinBox(); self.aug_p_vertical_spin.setDecimals(3); self.aug_p_vertical_spin.setRange(0.0, 1.0); self.aug_p_vertical_spin.setSingleStep(0.05)
+        self.aug_p_vertical_spin.setValue(cfg.AUG_P_VERTICAL)
+        self.aug_p_vertical_spin.valueChanged.connect(lambda v: setattr(cfg, 'AUG_P_VERTICAL', float(v)))
+        aug_form.addRow('P вертикальной аугментации:', self.aug_p_vertical_spin)
+
+        self.aug_p_color_spin = QDoubleSpinBox(); self.aug_p_color_spin.setDecimals(3); self.aug_p_color_spin.setRange(0.0, 1.0); self.aug_p_color_spin.setSingleStep(0.05)
+        self.aug_p_color_spin.setValue(cfg.AUG_P_COLOR)
+        self.aug_p_color_spin.valueChanged.connect(lambda v: setattr(cfg, 'AUG_P_COLOR', float(v)))
+        aug_form.addRow('P цветовых аугментаций:', self.aug_p_color_spin)
+
+        self.aug_p_noise_spin = QDoubleSpinBox(); self.aug_p_noise_spin.setDecimals(3); self.aug_p_noise_spin.setRange(0.0, 1.0); self.aug_p_noise_spin.setSingleStep(0.05)
+        self.aug_p_noise_spin.setValue(cfg.AUG_P_NOISE)
+        self.aug_p_noise_spin.valueChanged.connect(lambda v: setattr(cfg, 'AUG_P_NOISE', float(v)))
+        aug_form.addRow('P шума/размытий:', self.aug_p_noise_spin)
+
+        # P тильта (поворота) — управление вероятностью применения TiltAugmentation в датасете
+        self.aug_p_tilt_spin = QDoubleSpinBox(); self.aug_p_tilt_spin.setDecimals(3); self.aug_p_tilt_spin.setRange(0.0, 1.0); self.aug_p_tilt_spin.setSingleStep(0.05)
+        self.aug_p_tilt_spin.setValue(cfg.AUG_P_TILT)
+        self.aug_p_tilt_spin.valueChanged.connect(lambda v: setattr(cfg, 'AUG_P_TILT', float(v)))
+        aug_form.addRow('P тильта (поворота):', self.aug_p_tilt_spin)
+
+        # --- Дополнительные параметры, извлечённые из transforms.py и config.cfg ---
+        # Gamma limits (min,max)
+        self.gamma_min_spin = QSpinBox(); self.gamma_min_spin.setRange(1, 1000); self.gamma_min_spin.setValue(int(cfg.GAMMA_LIMIT[0]))
+        self.gamma_max_spin = QSpinBox(); self.gamma_max_spin.setRange(1, 1000); self.gamma_max_spin.setValue(int(cfg.GAMMA_LIMIT[1]))
+        def _update_gamma_min(v):
+            a = int(v); b = int(self.gamma_max_spin.value());
+            if a > b:
+                # поддерживаем инвариант min<=max
+                self.gamma_max_spin.setValue(a)
+                b = a
+            setattr(cfg, 'GAMMA_LIMIT', (a, b))
+        def _update_gamma_max(v):
+            a = int(self.gamma_min_spin.value()); b = int(v)
+            if b < a:
+                self.gamma_min_spin.setValue(b)
+                a = b
+            setattr(cfg, 'GAMMA_LIMIT', (a, b))
+        self.gamma_min_spin.valueChanged.connect(_update_gamma_min)
+        self.gamma_max_spin.valueChanged.connect(_update_gamma_max)
+        # Добавим их в одну строку (мини-виджет)
+        gamma_row = QWidget()
+        gamma_row_l = QHBoxLayout(); gamma_row_l.setContentsMargins(0,0,0,0)
+        gamma_row_l.addWidget(self.gamma_min_spin); gamma_row_l.addWidget(QLabel('—')); gamma_row_l.addWidget(self.gamma_max_spin)
+        gamma_row.setLayout(gamma_row_l)
+        aug_form.addRow('Gamma limits (min—max):', gamma_row)
+
+        # Brightness / Contrast limits
+        self.brightness_spin = QDoubleSpinBox(); self.brightness_spin.setDecimals(3); self.brightness_spin.setRange(0.0, 1.0); self.brightness_spin.setSingleStep(0.01); self.brightness_spin.setValue(cfg.BRIGHTNESS_LIMIT)
+        self.brightness_spin.valueChanged.connect(lambda v: setattr(cfg, 'BRIGHTNESS_LIMIT', float(v)))
+        aug_form.addRow('Brightness limit:', self.brightness_spin)
+
+        self.contrast_spin = QDoubleSpinBox(); self.contrast_spin.setDecimals(3); self.contrast_spin.setRange(0.0, 1.0); self.contrast_spin.setSingleStep(0.01); self.contrast_spin.setValue(cfg.CONTRAST_LIMIT)
+        self.contrast_spin.valueChanged.connect(lambda v: setattr(cfg, 'CONTRAST_LIMIT', float(v)))
+        aug_form.addRow('Contrast limit:', self.contrast_spin)
+
+        # Gauss noise var limits (min,max)
+        self.gauss_min_spin = QDoubleSpinBox(); self.gauss_min_spin.setDecimals(1); self.gauss_min_spin.setRange(0.0, 1000.0); self.gauss_min_spin.setValue(float(cfg.GAUSS_NOISE_VAR[0]))
+        self.gauss_max_spin = QDoubleSpinBox(); self.gauss_max_spin.setDecimals(1); self.gauss_max_spin.setRange(0.0, 1000.0); self.gauss_max_spin.setValue(float(cfg.GAUSS_NOISE_VAR[1]))
+        def _update_gauss_min(v):
+            a = float(v); b = float(self.gauss_max_spin.value());
+            if a > b:
+                self.gauss_max_spin.setValue(a); b = a
+            setattr(cfg, 'GAUSS_NOISE_VAR', (a, b))
+        def _update_gauss_max(v):
+            a = float(self.gauss_min_spin.value()); b = float(v);
+            if b < a:
+                self.gauss_min_spin.setValue(b); a = b
+            setattr(cfg, 'GAUSS_NOISE_VAR', (a, b))
+        self.gauss_min_spin.valueChanged.connect(_update_gauss_min)
+        self.gauss_max_spin.valueChanged.connect(_update_gauss_max)
+        gauss_row = QWidget(); gauss_row_l = QHBoxLayout(); gauss_row_l.setContentsMargins(0,0,0,0)
+        gauss_row_l.addWidget(self.gauss_min_spin); gauss_row_l.addWidget(QLabel('—')); gauss_row_l.addWidget(self.gauss_max_spin)
+        gauss_row.setLayout(gauss_row_l)
+        aug_form.addRow('Gauss noise var (min—max):', gauss_row)
+
+        # Motion and Median blur limits
+        self.motion_blur_spin = QSpinBox(); self.motion_blur_spin.setRange(1, 31); self.motion_blur_spin.setValue(int(cfg.MOTION_BLUR_LIMIT))
+        self.motion_blur_spin.valueChanged.connect(lambda v: setattr(cfg, 'MOTION_BLUR_LIMIT', int(v)))
+        aug_form.addRow('Motion blur limit:', self.motion_blur_spin)
+
+        self.median_blur_spin = QSpinBox(); self.median_blur_spin.setRange(1, 31); self.median_blur_spin.setValue(int(cfg.MEDIAN_BLUR_LIMIT))
+        self.median_blur_spin.valueChanged.connect(lambda v: setattr(cfg, 'MEDIAN_BLUR_LIMIT', int(v)))
+        aug_form.addRow('Median blur limit:', self.median_blur_spin)
+
+        aug_group.setLayout(aug_form)
+        right_col.addWidget(aug_group)
+        right_col.addStretch(1)
+        right_col_widget.setLayout(right_col)
+
+        # Добавляем правую панель в верхний ряд
+        top_row.addWidget(right_col_widget, 1)
+
+        # Добавляем верхний ряд в основной вертикальный layout
+        main_v.addLayout(top_row)
+
+        # НИЖНИЙ РЯД: графики — занимают всю ширину (левая + правая колонки)
         if _HAS_PYQTGRAPH:
             plots_row = QHBoxLayout()
 
@@ -86,7 +221,6 @@ class MainWindow(QMainWindow):
             self.acc_train_curve = self.acc_plot.plot([], [], pen=pg.mkPen('b', width=2), symbol='o', symbolBrush='b', symbolSize=6, name='Точность обучения')
             self.acc_val_curve = self.acc_plot.plot([], [], pen=pg.mkPen('c', width=2), symbol='o', symbolBrush='c', symbolSize=6, name='Точность валидации')
             self.acc_x_axis = self.acc_plot.getAxis('bottom')
-            # Ограничим шкалу по Y 0-100 (проценты)
             try:
                 self.acc_plot.setYRange(0, 100)
             except Exception:
@@ -95,18 +229,18 @@ class MainWindow(QMainWindow):
             # Loss plot (справа)
             self.plot_widget = pg.PlotWidget(title='Кривые обучения')
             self.plot_widget.addLegend()
-            # Кривые с узловыми точками и русскими подписями
             self.loss_curve = self.plot_widget.plot([], [], pen=pg.mkPen('r', width=2), symbol='o', symbolBrush='r', symbolSize=6, name='Ошибка обучения')
             self.val_curve = self.plot_widget.plot([], [], pen=pg.mkPen('g', width=2), symbol='o', symbolBrush='g', symbolSize=6, name='Ошибка валидации')
             self.x_axis = self.plot_widget.getAxis('bottom')
 
             plots_row.addWidget(self.acc_plot)
             plots_row.addWidget(self.plot_widget)
-            layout.addLayout(plots_row)
+            # Добавляем графики в основной вертикальный layout
+            main_v.addLayout(plots_row)
         else:
-            layout.addWidget(QLabel('pyqtgraph не установлен — живые графики отключены'))
+            main_v.addWidget(QLabel('pyqtgraph не установлен — живые графики отключены'))
 
-        tab.setLayout(layout)
+        tab.setLayout(main_v)
         self.tabs.addTab(tab, 'Обучение')
 
     def _build_inference_tab(self):

@@ -108,7 +108,10 @@ class SodaCanDataset(Dataset):
 
         # Применяем специальную аугментацию наклона
         if self.phase == 'train' and self.tilt_augmentation:
-            image = self.tilt_augmentation.apply_tilt(image, cfg.MAX_TILT_ANGLE)
+            # Применяем тильт с вероятностью cfg.AUG_P_TILT (по умолчанию 0.8)
+            p_tilt = getattr(cfg, 'AUG_P_TILT', 1.0)
+            if np.random.rand() < float(p_tilt):
+                image = self.tilt_augmentation.apply_tilt(image, cfg.MAX_TILT_ANGLE)
 
         # Применяем стандартные трансформы
         if self.transform:

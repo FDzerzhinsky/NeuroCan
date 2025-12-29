@@ -7,16 +7,16 @@ import warnings
 # Фильтруем конкретные предупреждения albumentations
 warnings.filterwarnings("ignore", message="The image is already gray.", category=UserWarning)
 
-
-# Значение вертикального сдвига (процент от высоты), экспортируемое для тестов
-VERTICAL_SHIFT_PERCENT = 0.02
+from config.config import cfg
 
 
 # Вспомогательная функция: вертикальный сдвиг изображения на случайный процент
-def _vertical_shift(image, max_shift_percent=VERTICAL_SHIFT_PERCENT):
+def _vertical_shift(image, max_shift_percent=None):
     """Смещает изображение строго по вертикали на случайный процент высоты в диапазоне [-max_shift_percent, max_shift_percent].
     Горизонтальное смещение отсутствует.
     """
+    if max_shift_percent is None:
+        max_shift_percent = cfg.VERTICAL_SHIFT_PERCENT
     if max_shift_percent == 0:
         return image
     h, w = image.shape[:2]
@@ -28,7 +28,7 @@ def _vertical_shift(image, max_shift_percent=VERTICAL_SHIFT_PERCENT):
 
 
 def _vert_wrapper(img, **kwargs):
-    return _vertical_shift(img, max_shift_percent=VERTICAL_SHIFT_PERCENT)
+    return _vertical_shift(img, max_shift_percent=cfg.VERTICAL_SHIFT_PERCENT)
 
 
 def get_transforms(phase='train'):
@@ -36,8 +36,6 @@ def get_transforms(phase='train'):
     Возвращает трансформы для обучения/валидации
     Теперь поддерживает grayscale изображения без лишних предупреждений
     """
-    from config.config import cfg
-
     # Базовые трансформы которые применяются всегда
     base_transforms = []
 
@@ -53,36 +51,24 @@ def get_transforms(phase='train'):
             #     p=0.8
             # ),
 
-            # Новая конфигурация A.Affine: поворот и shear оставляем, масштабирование отключено (1.0),
-            # горизонтальные смещения запрещены (translate_percent по горизонтали = 0).
-            # A.Affine(
-            #     rotate=(-cfg.MAX_TILT_ANGLE, cfg.MAX_TILT_ANGLE),
-            #     # translate_percent intentionally omitted to avoid internal formatting issues;
-            #     # вертикальные сдвиги контролируются отдельно via _vertical_shift
-            #     # horizontal translation must be forbidden per requirements
-#
-#                 scale=(1.0, 1.0),  # масштабирование отключено
-#                 shear=(-1, 1),
-#                 p=0.8
-#             ),
             # Горизонтальные смещения и поворот не применяются здесь — единственный источник тильта находится в dataset.TiltAugmentation
             # Отдельная, строго вертикальная трансформация с контролируемой амплитудой.
-            # Применяется с вероятностью p_vertical (совпадает с оригинальной вероятностью 0.8).
-            A.Lambda(image=_vert_wrapper, p=0.8),
+            # Применяется с вероятностью p_vertical (берётся из cfg).
+            A.Lambda(image=_vert_wrapper, p=cfg.AUG_P_VERTICAL),
 
             A.OneOf([
-                A.RandomGamma(gamma_limit=(80, 120), p=0.5),
+                A.RandomGamma(gamma_limit=cfg.GAMMA_LIMIT, p=0.5),
                 A.RandomBrightnessContrast(
-                    brightness_limit=0.1,
-                    contrast_limit=0.1,
+                    brightness_limit=cfg.BRIGHTNESS_LIMIT,
+                    contrast_limit=cfg.CONTRAST_LIMIT,
                     p=0.5
                 ),
-            ], p=0.5),
+            ], p=cfg.AUG_P_COLOR),
             A.OneOf([
-                A.GaussNoise(),
-                A.MotionBlur(blur_limit=3),
-                A.MedianBlur(blur_limit=3),
-            ], p=0.3),
+                A.GaussNoise(var_limit=cfg.GAUSS_NOISE_VAR),
+                A.MotionBlur(blur_limit=cfg.MOTION_BLUR_LIMIT),
+                A.MedianBlur(blur_limit=cfg.MEDIAN_BLUR_LIMIT),
+            ], p=cfg.AUG_P_NOISE),
         ]
 
         # Нормализация для grayscale
@@ -107,12 +93,15 @@ class TiltAugmentation:
     """Специальная аугментация наклона банки"""
 
     @staticmethod
-    def apply_tilt(image, max_angle=1.5, angle: float = None):
+    def apply_tilt(image, max_angle=None, angle: float = None):
         """
         Применяет наклон (поворот) к изображению банки.
         Если параметр angle задан (в градусах), применяется именно он; иначе выбирается случайный угол в диапазоне [-max_angle, max_angle].
         Работает как с grayscale, так и с RGB изображениями.
         """
+        if max_angle is None:
+            max_angle = cfg.MAX_TILT_ANGLE
+
         if max_angle == 0 and angle is None:
             return image
 

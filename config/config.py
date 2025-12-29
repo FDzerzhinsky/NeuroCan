@@ -28,6 +28,26 @@ class Config:
 
     # Аугментация
     MAX_TILT_ANGLE = 3
+    # Процент вертикального сдвига (доля от высоты изображения)
+    VERTICAL_SHIFT_PERCENT = 0.01
+    # Вероятности появления аугментаций (используются в data/transforms)
+    AUG_P_VERTICAL = 0.8
+    AUG_P_COLOR = 0.5
+    AUG_P_NOISE = 0.3
+    # Вероятность применения тильта (поворота) в датасете
+    AUG_P_TILT = 0.8
+
+    # Дополнительные параметры аугментаций (извлечены из transforms)
+    # Gamma limits — в формате (min, max) те же числа, что в оригинале (80..120)
+    GAMMA_LIMIT = (80, 120)
+    # Brightness/contrast limits (абсолютные значения для RandomBrightnessContrast)
+    BRIGHTNESS_LIMIT = 0.1
+    CONTRAST_LIMIT = 0.1
+    # Gauss noise variance limits — используем как var_limit для A.GaussNoise
+    GAUSS_NOISE_VAR = (10.0, 50.0)
+    # Размытия: пределы для MotionBlur и MedianBlur
+    MOTION_BLUR_LIMIT = 3
+    MEDIAN_BLUR_LIMIT = 3
 
     # Оборудование
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
