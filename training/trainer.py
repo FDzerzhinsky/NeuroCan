@@ -8,6 +8,7 @@ from pathlib import Path
 from config.config import cfg
 
 
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -92,7 +93,23 @@ class CanRotationTrainer:
             loss = self.criterion(outputs, angles)
 
             loss.backward()
+
+            # Градиентное клиппирование при наличии конфиг-параметра
+            try:
+                clip_val = float(getattr(cfg, 'GRAD_CLIP_NORM', 0.0))
+                if clip_val > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip_val)
+            except Exception:
+                pass
+
             self.optimizer.step()
+
+            # Если используется OneCycleLR — шагать scheduler по батчам
+            try:
+                if self.scheduler is not None and self.scheduler.__class__.__name__ == 'OneCycleLR':
+                    self.scheduler.step()
+            except Exception:
+                pass
 
             total_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
@@ -209,7 +226,15 @@ class CanRotationTrainer:
                 break
 
             val_loss, val_acc = self.validate_epoch(epoch)
-            self.scheduler.step()
+
+            # Scheduler: если ReduceLROnPlateau — передаём метрику, иначе делаем шаг без аргумента
+            try:
+                if self.scheduler is not None and self.scheduler.__class__.__name__ == 'ReduceLROnPlateau':
+                    self.scheduler.step(val_loss)
+                elif self.scheduler is not None:
+                    self.scheduler.step()
+            except Exception:
+                pass
 
             # Новая логика сохранения: сохраняем, если ИЛИ улучшилась accuracy, ИЛИ уменьшился val_loss
             improved_acc = val_acc > self.best_accuracy

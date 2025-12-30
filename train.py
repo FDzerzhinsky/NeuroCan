@@ -6,7 +6,7 @@ from training.trainer import CanRotationTrainer
 
 from torch.utils.data import DataLoader, random_split
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau, OneCycleLR
 import argparse
 import warnings
 
@@ -74,14 +74,24 @@ def main():
         backbone=cfg.MODEL_NAME
     )
 
-    # Оптимизатор и scheduler
+    # Оптимизатор
     optimizer = AdamW(
         model.parameters(),
         lr=args.lr,
         weight_decay=cfg.WEIGHT_DECAY
     )
 
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    # LR scheduler выбирается из конфига
+    scheduler = None
+    if getattr(cfg, 'LR_SCHEDULER', 'ReduceLROnPlateau') == 'ReduceLROnPlateau':
+        scheduler = ReduceLROnPlateau(optimizer, factor=cfg.LR_REDUCE_FACTOR, patience=cfg.LR_REDUCE_PATIENCE)
+    elif cfg.LR_SCHEDULER == 'CosineAnnealing':
+        scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    elif cfg.LR_SCHEDULER == 'OneCycleLR':
+        scheduler = OneCycleLR(optimizer, max_lr=args.lr, total_steps=args.epochs * (len(train_loader) if 'train_loader' in locals() else 1))
+    else:
+        # default fallback
+        scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     # Тренер
     trainer = CanRotationTrainer(

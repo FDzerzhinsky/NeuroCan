@@ -36,16 +36,32 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
+        # Попробуем загрузить пользовательские переопределения конфигурации (если есть)
+        try:
+            loaded = cfg.load_user_config()
+            if loaded:
+                print('[MainWindow] Loaded user augmentation config overrides from', cfg.USER_CONFIG_FILE)
+        except Exception:
+            pass
+
         self._build_training_tab()
+        # Вынесем аугментации в отдельную вкладку
+        self._build_augmentations_tab()
         self._build_inference_tab()
         self._build_export_tab()
 
+        # Подключаем обновление виджетов аугментаций при переключении вкладок
+        try:
+            self.tabs.currentChanged.connect(self._on_tab_changed)
+        except Exception:
+            pass
+
     def _build_training_tab(self):
         tab = QWidget()
-        # Основной вертикальный контейнер: сверху — управление + панель аугментаций, снизу — графики
+        # Основной вертикальный контейнер: сверху — управление, снизу — графики
         main_v = QVBoxLayout()
 
-        # ВЕРХНИЙ РЯД: поля/кнопки (слева) и панель аугментаций (справа)
+        # ВЕРХНИЙ РЯД: поля/кнопки
         top_row = QHBoxLayout()
 
         # Левая колонка верхнего ряда: форма и кнопки
@@ -87,126 +103,8 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.stop_btn)
         left_controls.addLayout(btn_row)
 
-        # Добавляем левый контрол в верхний ряд
-        top_row.addLayout(left_controls, 3)
-
-        # Правая колонка верхнего ряда: параметры аугментации
-        right_col_widget = QWidget()
-        right_col = QVBoxLayout()
-        from PySide6.QtWidgets import QGroupBox, QDoubleSpinBox
-
-        aug_group = QGroupBox('Параметры аугментации')
-        aug_form = QFormLayout()
-
-        # MAX_TILT_ANGLE (int)
-        self.max_tilt_spin = QSpinBox()
-        self.max_tilt_spin.setRange(0, 45)
-        self.max_tilt_spin.setValue(cfg.MAX_TILT_ANGLE)
-        self.max_tilt_spin.valueChanged.connect(lambda v: setattr(cfg, 'MAX_TILT_ANGLE', int(v)))
-        aug_form.addRow('Максимальный угол тильта (°):', self.max_tilt_spin)
-
-        # VERTICAL_SHIFT_PERCENT (float)
-        self.vert_shift_spin = QDoubleSpinBox()
-        self.vert_shift_spin.setDecimals(3)
-        self.vert_shift_spin.setRange(0.0, 0.5)
-        self.vert_shift_spin.setSingleStep(0.005)
-        self.vert_shift_spin.setValue(cfg.VERTICAL_SHIFT_PERCENT)
-        self.vert_shift_spin.valueChanged.connect(lambda v: setattr(cfg, 'VERTICAL_SHIFT_PERCENT', float(v)))
-        aug_form.addRow('Вертикальный сдвиг (доля высоты):', self.vert_shift_spin)
-
-        # Вероятности аугментаций
-        self.aug_p_vertical_spin = QDoubleSpinBox(); self.aug_p_vertical_spin.setDecimals(3); self.aug_p_vertical_spin.setRange(0.0, 1.0); self.aug_p_vertical_spin.setSingleStep(0.05)
-        self.aug_p_vertical_spin.setValue(cfg.AUG_P_VERTICAL)
-        self.aug_p_vertical_spin.valueChanged.connect(lambda v: setattr(cfg, 'AUG_P_VERTICAL', float(v)))
-        aug_form.addRow('P вертикальной аугментации:', self.aug_p_vertical_spin)
-
-        self.aug_p_color_spin = QDoubleSpinBox(); self.aug_p_color_spin.setDecimals(3); self.aug_p_color_spin.setRange(0.0, 1.0); self.aug_p_color_spin.setSingleStep(0.05)
-        self.aug_p_color_spin.setValue(cfg.AUG_P_COLOR)
-        self.aug_p_color_spin.valueChanged.connect(lambda v: setattr(cfg, 'AUG_P_COLOR', float(v)))
-        aug_form.addRow('P цветовых аугментаций:', self.aug_p_color_spin)
-
-        self.aug_p_noise_spin = QDoubleSpinBox(); self.aug_p_noise_spin.setDecimals(3); self.aug_p_noise_spin.setRange(0.0, 1.0); self.aug_p_noise_spin.setSingleStep(0.05)
-        self.aug_p_noise_spin.setValue(cfg.AUG_P_NOISE)
-        self.aug_p_noise_spin.valueChanged.connect(lambda v: setattr(cfg, 'AUG_P_NOISE', float(v)))
-        aug_form.addRow('P шума/размытий:', self.aug_p_noise_spin)
-
-        # P тильта (поворота) — управление вероятностью применения TiltAugmentation в датасете
-        self.aug_p_tilt_spin = QDoubleSpinBox(); self.aug_p_tilt_spin.setDecimals(3); self.aug_p_tilt_spin.setRange(0.0, 1.0); self.aug_p_tilt_spin.setSingleStep(0.05)
-        self.aug_p_tilt_spin.setValue(cfg.AUG_P_TILT)
-        self.aug_p_tilt_spin.valueChanged.connect(lambda v: setattr(cfg, 'AUG_P_TILT', float(v)))
-        aug_form.addRow('P тильта (поворота):', self.aug_p_tilt_spin)
-
-        # --- Дополнительные параметры, извлечённые из transforms.py и config.cfg ---
-        # Gamma limits (min,max)
-        self.gamma_min_spin = QSpinBox(); self.gamma_min_spin.setRange(1, 1000); self.gamma_min_spin.setValue(int(cfg.GAMMA_LIMIT[0]))
-        self.gamma_max_spin = QSpinBox(); self.gamma_max_spin.setRange(1, 1000); self.gamma_max_spin.setValue(int(cfg.GAMMA_LIMIT[1]))
-        def _update_gamma_min(v):
-            a = int(v); b = int(self.gamma_max_spin.value());
-            if a > b:
-                # поддерживаем инвариант min<=max
-                self.gamma_max_spin.setValue(a)
-                b = a
-            setattr(cfg, 'GAMMA_LIMIT', (a, b))
-        def _update_gamma_max(v):
-            a = int(self.gamma_min_spin.value()); b = int(v)
-            if b < a:
-                self.gamma_min_spin.setValue(b)
-                a = b
-            setattr(cfg, 'GAMMA_LIMIT', (a, b))
-        self.gamma_min_spin.valueChanged.connect(_update_gamma_min)
-        self.gamma_max_spin.valueChanged.connect(_update_gamma_max)
-        # Добавим их в одну строку (мини-виджет)
-        gamma_row = QWidget()
-        gamma_row_l = QHBoxLayout(); gamma_row_l.setContentsMargins(0,0,0,0)
-        gamma_row_l.addWidget(self.gamma_min_spin); gamma_row_l.addWidget(QLabel('—')); gamma_row_l.addWidget(self.gamma_max_spin)
-        gamma_row.setLayout(gamma_row_l)
-        aug_form.addRow('Gamma limits (min—max):', gamma_row)
-
-        # Brightness / Contrast limits
-        self.brightness_spin = QDoubleSpinBox(); self.brightness_spin.setDecimals(3); self.brightness_spin.setRange(0.0, 1.0); self.brightness_spin.setSingleStep(0.01); self.brightness_spin.setValue(cfg.BRIGHTNESS_LIMIT)
-        self.brightness_spin.valueChanged.connect(lambda v: setattr(cfg, 'BRIGHTNESS_LIMIT', float(v)))
-        aug_form.addRow('Brightness limit:', self.brightness_spin)
-
-        self.contrast_spin = QDoubleSpinBox(); self.contrast_spin.setDecimals(3); self.contrast_spin.setRange(0.0, 1.0); self.contrast_spin.setSingleStep(0.01); self.contrast_spin.setValue(cfg.CONTRAST_LIMIT)
-        self.contrast_spin.valueChanged.connect(lambda v: setattr(cfg, 'CONTRAST_LIMIT', float(v)))
-        aug_form.addRow('Contrast limit:', self.contrast_spin)
-
-        # Gauss noise var limits (min,max)
-        self.gauss_min_spin = QDoubleSpinBox(); self.gauss_min_spin.setDecimals(1); self.gauss_min_spin.setRange(0.0, 1000.0); self.gauss_min_spin.setValue(float(cfg.GAUSS_NOISE_VAR[0]))
-        self.gauss_max_spin = QDoubleSpinBox(); self.gauss_max_spin.setDecimals(1); self.gauss_max_spin.setRange(0.0, 1000.0); self.gauss_max_spin.setValue(float(cfg.GAUSS_NOISE_VAR[1]))
-        def _update_gauss_min(v):
-            a = float(v); b = float(self.gauss_max_spin.value());
-            if a > b:
-                self.gauss_max_spin.setValue(a); b = a
-            setattr(cfg, 'GAUSS_NOISE_VAR', (a, b))
-        def _update_gauss_max(v):
-            a = float(self.gauss_min_spin.value()); b = float(v);
-            if b < a:
-                self.gauss_min_spin.setValue(b); a = b
-            setattr(cfg, 'GAUSS_NOISE_VAR', (a, b))
-        self.gauss_min_spin.valueChanged.connect(_update_gauss_min)
-        self.gauss_max_spin.valueChanged.connect(_update_gauss_max)
-        gauss_row = QWidget(); gauss_row_l = QHBoxLayout(); gauss_row_l.setContentsMargins(0,0,0,0)
-        gauss_row_l.addWidget(self.gauss_min_spin); gauss_row_l.addWidget(QLabel('—')); gauss_row_l.addWidget(self.gauss_max_spin)
-        gauss_row.setLayout(gauss_row_l)
-        aug_form.addRow('Gauss noise var (min—max):', gauss_row)
-
-        # Motion and Median blur limits
-        self.motion_blur_spin = QSpinBox(); self.motion_blur_spin.setRange(1, 31); self.motion_blur_spin.setValue(int(cfg.MOTION_BLUR_LIMIT))
-        self.motion_blur_spin.valueChanged.connect(lambda v: setattr(cfg, 'MOTION_BLUR_LIMIT', int(v)))
-        aug_form.addRow('Motion blur limit:', self.motion_blur_spin)
-
-        self.median_blur_spin = QSpinBox(); self.median_blur_spin.setRange(1, 31); self.median_blur_spin.setValue(int(cfg.MEDIAN_BLUR_LIMIT))
-        self.median_blur_spin.valueChanged.connect(lambda v: setattr(cfg, 'MEDIAN_BLUR_LIMIT', int(v)))
-        aug_form.addRow('Median blur limit:', self.median_blur_spin)
-
-        aug_group.setLayout(aug_form)
-        right_col.addWidget(aug_group)
-        right_col.addStretch(1)
-        right_col_widget.setLayout(right_col)
-
-        # Добавляем правую панель в верхний ряд
-        top_row.addWidget(right_col_widget, 1)
+        # Добавляем левый контрол в верхний ряд (без правой панели аугментаций)
+        top_row.addLayout(left_controls, 1)
 
         # Добавляем верхний ряд в основной вертикальный layout
         main_v.addLayout(top_row)
@@ -242,6 +140,192 @@ class MainWindow(QMainWindow):
 
         tab.setLayout(main_v)
         self.tabs.addTab(tab, 'Обучение')
+
+    def _build_augmentations_tab(self):
+        # Новая вкладка для параметров аугментации (вынесена из training tab)
+        tab = QWidget()
+        layout = QVBoxLayout()
+        from PySide6.QtWidgets import QGroupBox, QDoubleSpinBox
+
+        # Инициализируем pending-словарь значениями из cfg
+        # Попробуем заново загрузить пользовательский файл конфигурации (на случай, если он был создан после старта)
+        try:
+            cfg.load_user_config()
+        except Exception:
+            pass
+
+        self._pending_aug = {
+            'MAX_TILT_ANGLE': int(getattr(cfg, 'MAX_TILT_ANGLE')),
+            'VERTICAL_SHIFT_PERCENT': float(getattr(cfg, 'VERTICAL_SHIFT_PERCENT')),
+            'AUG_P_VERTICAL': float(getattr(cfg, 'AUG_P_VERTICAL')),
+            'AUG_P_COLOR': float(getattr(cfg, 'AUG_P_COLOR')),
+            'AUG_P_NOISE': float(getattr(cfg, 'AUG_P_NOISE')),
+            'AUG_P_TILT': float(getattr(cfg, 'AUG_P_TILT')),
+            'GAMMA_LIMIT': tuple(getattr(cfg, 'GAMMA_LIMIT')),
+            'BRIGHTNESS_LIMIT': float(getattr(cfg, 'BRIGHTNESS_LIMIT')),
+            'CONTRAST_LIMIT': float(getattr(cfg, 'CONTRAST_LIMIT')),
+            'GAUSS_NOISE_VAR': tuple(getattr(cfg, 'GAUSS_NOISE_VAR')),
+            'MOTION_BLUR_LIMIT': int(getattr(cfg, 'MOTION_BLUR_LIMIT')),
+            'MEDIAN_BLUR_LIMIT': int(getattr(cfg, 'MEDIAN_BLUR_LIMIT')),
+        }
+
+        aug_group = QGroupBox('Параметры аугментации')
+        aug_form = QFormLayout()
+
+        # MAX_TILT_ANGLE (int)
+        self.max_tilt_spin = QSpinBox()
+        self.max_tilt_spin.setRange(0, 45)
+        self.max_tilt_spin.setValue(self._pending_aug['MAX_TILT_ANGLE'])
+        self.max_tilt_spin.valueChanged.connect(lambda v: self._pending_aug.update({'MAX_TILT_ANGLE': int(v)}))
+        aug_form.addRow('Максимальный угол тильта (°):', self.max_tilt_spin)
+
+        # VERTICAL_SHIFT_PERCENT (float)
+        self.vert_shift_spin = QDoubleSpinBox()
+        self.vert_shift_spin.setDecimals(3)
+        self.vert_shift_spin.setRange(0.0, 0.5)
+        self.vert_shift_spin.setSingleStep(0.005)
+        self.vert_shift_spin.setValue(self._pending_aug['VERTICAL_SHIFT_PERCENT'])
+        self.vert_shift_spin.valueChanged.connect(lambda v: self._pending_aug.update({'VERTICAL_SHIFT_PERCENT': float(v)}))
+        aug_form.addRow('Вертикальный сдвиг (доля высоты):', self.vert_shift_spin)
+
+        # Вероятности аугментаций
+        self.aug_p_vertical_spin = QDoubleSpinBox(); self.aug_p_vertical_spin.setDecimals(3); self.aug_p_vertical_spin.setRange(0.0, 1.0); self.aug_p_vertical_spin.setSingleStep(0.05)
+        self.aug_p_vertical_spin.setValue(self._pending_aug['AUG_P_VERTICAL'])
+        self.aug_p_vertical_spin.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_P_VERTICAL': float(v)}))
+        aug_form.addRow('P вертикальной аугментации:', self.aug_p_vertical_spin)
+
+        self.aug_p_color_spin = QDoubleSpinBox(); self.aug_p_color_spin.setDecimals(3); self.aug_p_color_spin.setRange(0.0, 1.0); self.aug_p_color_spin.setSingleStep(0.05)
+        self.aug_p_color_spin.setValue(self._pending_aug['AUG_P_COLOR'])
+        self.aug_p_color_spin.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_P_COLOR': float(v)}))
+        aug_form.addRow('P цветовых аугментаций:', self.aug_p_color_spin)
+
+        self.aug_p_noise_spin = QDoubleSpinBox(); self.aug_p_noise_spin.setDecimals(3); self.aug_p_noise_spin.setRange(0.0, 1.0); self.aug_p_noise_spin.setSingleStep(0.05)
+        self.aug_p_noise_spin.setValue(self._pending_aug['AUG_P_NOISE'])
+        self.aug_p_noise_spin.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_P_NOISE': float(v)}))
+        aug_form.addRow('P шума/размытий:', self.aug_p_noise_spin)
+
+        # P тильта (поворота) — отложенное обновление
+        self.aug_p_tilt_spin = QDoubleSpinBox(); self.aug_p_tilt_spin.setDecimals(3); self.aug_p_tilt_spin.setRange(0.0, 1.0); self.aug_p_tilt_spin.setSingleStep(0.05)
+        self.aug_p_tilt_spin.setValue(self._pending_aug['AUG_P_TILT'])
+        self.aug_p_tilt_spin.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_P_TILT': float(v)}))
+        aug_form.addRow('P тильта (поворота):', self.aug_p_tilt_spin)
+
+        # --- Дополнительные параметры, извлечённые из transforms.py и config.cfg ---
+        # Gamma limits (min,max)
+        self.gamma_min_spin = QSpinBox(); self.gamma_min_spin.setRange(1, 1000); self.gamma_min_spin.setValue(int(self._pending_aug['GAMMA_LIMIT'][0]))
+        self.gamma_max_spin = QSpinBox(); self.gamma_max_spin.setRange(1, 1000); self.gamma_max_spin.setValue(int(self._pending_aug['GAMMA_LIMIT'][1]))
+        def _update_gamma_min(v):
+            a = int(v)
+            b = int(self.gamma_max_spin.value())
+            if a > b:
+                self.gamma_max_spin.setValue(a)
+                b = a
+            self._pending_aug['GAMMA_LIMIT'] = (a, b)
+        def _update_gamma_max(v):
+            a = int(self.gamma_min_spin.value())
+            b = int(v)
+            if b < a:
+                self.gamma_min_spin.setValue(b)
+                a = b
+            self._pending_aug['GAMMA_LIMIT'] = (a, b)
+        self.gamma_min_spin.valueChanged.connect(_update_gamma_min)
+        self.gamma_max_spin.valueChanged.connect(_update_gamma_max)
+        # Добавим их в одну строку (мини-виджет)
+        gamma_row = QWidget()
+        gamma_row_l = QHBoxLayout(); gamma_row_l.setContentsMargins(0,0,0,0)
+        gamma_row_l.addWidget(self.gamma_min_spin); gamma_row_l.addWidget(QLabel('—')); gamma_row_l.addWidget(self.gamma_max_spin)
+        gamma_row.setLayout(gamma_row_l)
+        aug_form.addRow('Gamma limits (min—max):', gamma_row)
+
+        # Brightness / Contrast limits
+        self.brightness_spin = QDoubleSpinBox(); self.brightness_spin.setDecimals(3); self.brightness_spin.setRange(0.0, 1.0); self.brightness_spin.setSingleStep(0.01); self.brightness_spin.setValue(self._pending_aug['BRIGHTNESS_LIMIT'])
+        self.brightness_spin.valueChanged.connect(lambda v: self._pending_aug.update({'BRIGHTNESS_LIMIT': float(v)}))
+        aug_form.addRow('Brightness limit:', self.brightness_spin)
+
+        self.contrast_spin = QDoubleSpinBox(); self.contrast_spin.setDecimals(3); self.contrast_spin.setRange(0.0, 1.0); self.contrast_spin.setSingleStep(0.01); self.contrast_spin.setValue(self._pending_aug['CONTRAST_LIMIT'])
+        self.contrast_spin.valueChanged.connect(lambda v: self._pending_aug.update({'CONTRAST_LIMIT': float(v)}))
+        aug_form.addRow('Contrast limit:', self.contrast_spin)
+
+        # Gauss noise var limits (min,max)
+        self.gauss_min_spin = QDoubleSpinBox(); self.gauss_min_spin.setDecimals(1); self.gauss_min_spin.setRange(0.0, 1000.0); self.gauss_min_spin.setValue(float(self._pending_aug['GAUSS_NOISE_VAR'][0]))
+        self.gauss_max_spin = QDoubleSpinBox(); self.gauss_max_spin.setDecimals(1); self.gauss_max_spin.setRange(0.0, 1000.0); self.gauss_max_spin.setValue(float(self._pending_aug['GAUSS_NOISE_VAR'][1]))
+        def _update_gauss_min(v):
+            a = float(v)
+            b = float(self.gauss_max_spin.value())
+            if a > b:
+                self.gauss_max_spin.setValue(a)
+                b = a
+            self._pending_aug['GAUSS_NOISE_VAR'] = (a, b)
+        def _update_gauss_max(v):
+            a = float(self.gauss_min_spin.value())
+            b = float(v)
+            if b < a:
+                self.gauss_min_spin.setValue(b)
+                a = b
+            self._pending_aug['GAUSS_NOISE_VAR'] = (a, b)
+        self.gauss_min_spin.valueChanged.connect(_update_gauss_min)
+        self.gauss_max_spin.valueChanged.connect(_update_gauss_max)
+        gauss_row = QWidget(); gauss_row_l = QHBoxLayout(); gauss_row_l.setContentsMargins(0,0,0,0)
+        gauss_row_l.addWidget(self.gauss_min_spin); gauss_row_l.addWidget(QLabel('—')); gauss_row_l.addWidget(self.gauss_max_spin)
+        gauss_row.setLayout(gauss_row_l)
+        aug_form.addRow('Gauss noise var (min—max):', gauss_row)
+
+        # Motion and Median blur limits
+        self.motion_blur_spin = QSpinBox(); self.motion_blur_spin.setRange(1, 31); self.motion_blur_spin.setValue(int(self._pending_aug['MOTION_BLUR_LIMIT']))
+        self.motion_blur_spin.valueChanged.connect(lambda v: self._pending_aug.update({'MOTION_BLUR_LIMIT': int(v)}))
+        aug_form.addRow('Motion blur limit:', self.motion_blur_spin)
+
+        self.median_blur_spin = QSpinBox(); self.median_blur_spin.setRange(1, 31); self.median_blur_spin.setValue(int(self._pending_aug['MEDIAN_BLUR_LIMIT']))
+        self.median_blur_spin.valueChanged.connect(lambda v: self._pending_aug.update({'MEDIAN_BLUR_LIMIT': int(v)}))
+        aug_form.addRow('Median blur limit:', self.median_blur_spin)
+
+        aug_group.setLayout(aug_form)
+        layout.addWidget(aug_group)
+
+        # После создания виджетов — подгрузим свежие значения из cfg
+        self._load_aug_widgets_from_cfg()
+
+        # Добавим кнопку применения изменений
+        apply_row = QWidget()
+        apply_row_l = QHBoxLayout(); apply_row_l.setContentsMargins(0,0,0,0)
+        apply_btn = QPushButton('Принять')
+        def _apply_augmentations():
+            # Записываем все значения из pending в cfg
+            try:
+                cfg.MAX_TILT_ANGLE = int(self._pending_aug['MAX_TILT_ANGLE'])
+                cfg.VERTICAL_SHIFT_PERCENT = float(self._pending_aug['VERTICAL_SHIFT_PERCENT'])
+                cfg.AUG_P_VERTICAL = float(self._pending_aug['AUG_P_VERTICAL'])
+                cfg.AUG_P_COLOR = float(self._pending_aug['AUG_P_COLOR'])
+                cfg.AUG_P_NOISE = float(self._pending_aug['AUG_P_NOISE'])
+                cfg.AUG_P_TILT = float(self._pending_aug['AUG_P_TILT'])
+                cfg.GAMMA_LIMIT = tuple(self._pending_aug['GAMMA_LIMIT'])
+                cfg.BRIGHTNESS_LIMIT = float(self._pending_aug['BRIGHTNESS_LIMIT'])
+                cfg.CONTRAST_LIMIT = float(self._pending_aug['CONTRAST_LIMIT'])
+                cfg.GAUSS_NOISE_VAR = tuple(self._pending_aug['GAUSS_NOISE_VAR'])
+                cfg.MOTION_BLUR_LIMIT = int(self._pending_aug['MOTION_BLUR_LIMIT'])
+                cfg.MEDIAN_BLUR_LIMIT = int(self._pending_aug['MEDIAN_BLUR_LIMIT'])
+
+                # Сохраняем изменения в файл для следующего запуска
+                try:
+                    ok = cfg.save_user_config()
+                    if not ok:
+                        QMessageBox.warning(self, 'Аугментации', 'Параметры применены, но не удалось сохранить в файл настроек')
+                    else:
+                        QMessageBox.information(self, 'Аугментации', 'Параметры аугментаций применены и сохранены в конфиге')
+                except Exception:
+                    QMessageBox.information(self, 'Аугментации', 'Параметры аугментаций применены (сохранение в файл не удалось)')
+            except Exception as e:
+                QMessageBox.critical(self, 'Ошибка', f'Не удалось применить параметры: {e}')
+
+        apply_btn.clicked.connect(_apply_augmentations)
+        apply_row_l.addStretch(1)
+        apply_row_l.addWidget(apply_btn)
+        apply_row.setLayout(apply_row_l)
+        layout.addWidget(apply_row)
+
+        layout.addStretch(1)
+        tab.setLayout(layout)
+        self.tabs.addTab(tab, 'Аугментации')
 
     def _build_inference_tab(self):
         tab = QWidget()
@@ -605,3 +689,79 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, 'Выберите папку для сохранения ONNX', str(cfg.DEFAULT_ONNX_DIR))
         if folder:
             self.onnx_folder_label.setText(folder)
+
+    def _load_aug_widgets_from_cfg(self):
+        """Загружает текущие значения аугментаций из cfg в виджеты и self._pending_aug.
+        Метод безопасен при частичной инициализации (проверяет наличие виджетов).
+        """
+        try:
+            # Обновим pending-словарь из cfg (на случай, если cfg был изменён/загружен)
+            try:
+                self._pending_aug.update({
+                    'MAX_TILT_ANGLE': int(getattr(cfg, 'MAX_TILT_ANGLE')),
+                    'VERTICAL_SHIFT_PERCENT': float(getattr(cfg, 'VERTICAL_SHIFT_PERCENT')),
+                    'AUG_P_VERTICAL': float(getattr(cfg, 'AUG_P_VERTICAL')),
+                    'AUG_P_COLOR': float(getattr(cfg, 'AUG_P_COLOR')),
+                    'AUG_P_NOISE': float(getattr(cfg, 'AUG_P_NOISE')),
+                    'AUG_P_TILT': float(getattr(cfg, 'AUG_P_TILT')),
+                    'GAMMA_LIMIT': tuple(getattr(cfg, 'GAMMA_LIMIT')),
+                    'BRIGHTNESS_LIMIT': float(getattr(cfg, 'BRIGHTNESS_LIMIT')),
+                    'CONTRAST_LIMIT': float(getattr(cfg, 'CONTRAST_LIMIT')),
+                    'GAUSS_NOISE_VAR': tuple(getattr(cfg, 'GAUSS_NOISE_VAR')),
+                    'MOTION_BLUR_LIMIT': int(getattr(cfg, 'MOTION_BLUR_LIMIT')),
+                    'MEDIAN_BLUR_LIMIT': int(getattr(cfg, 'MEDIAN_BLUR_LIMIT')),
+                })
+            except Exception:
+                # если чтение cfg не удалось — оставляем pending как есть
+                pass
+
+            # Вспомогательная функция для безопасной установки значения виджета
+            def _safe_set(widget_attr, value):
+                try:
+                    widget = getattr(self, widget_attr, None)
+                    if widget is None:
+                        return
+                    # QSpinBox / QDoubleSpinBox поддерживают setValue
+                    widget.setValue(value)
+                except Exception:
+                    # игнорируем ошибку установки
+                    pass
+
+            # Устанавливаем значения в соответствующие виджеты (если они созданы)
+            _safe_set('max_tilt_spin', int(self._pending_aug.get('MAX_TILT_ANGLE', 0)))
+            _safe_set('vert_shift_spin', float(self._pending_aug.get('VERTICAL_SHIFT_PERCENT', 0.0)))
+            _safe_set('aug_p_vertical_spin', float(self._pending_aug.get('AUG_P_VERTICAL', 0.0)))
+            _safe_set('aug_p_color_spin', float(self._pending_aug.get('AUG_P_COLOR', 0.0)))
+            _safe_set('aug_p_noise_spin', float(self._pending_aug.get('AUG_P_NOISE', 0.0)))
+            _safe_set('aug_p_tilt_spin', float(self._pending_aug.get('AUG_P_TILT', 0.0)))
+
+            # Gamma limits (tuple)
+            gamma = self._pending_aug.get('GAMMA_LIMIT', (80, 120))
+            try:
+                _safe_set('gamma_min_spin', int(gamma[0]))
+                _safe_set('gamma_max_spin', int(gamma[1]))
+            except Exception:
+                pass
+
+            # Brightness / Contrast
+            _safe_set('brightness_spin', float(self._pending_aug.get('BRIGHTNESS_LIMIT', 0.1)))
+            _safe_set('contrast_spin', float(self._pending_aug.get('CONTRAST_LIMIT', 0.1)))
+
+            # Gauss noise limits
+            gauss = self._pending_aug.get('GAUSS_NOISE_VAR', (10.0, 50.0))
+            try:
+                _safe_set('gauss_min_spin', float(gauss[0]))
+                _safe_set('gauss_max_spin', float(gauss[1]))
+            except Exception:
+                pass
+
+            # Motion / Median blur
+            _safe_set('motion_blur_spin', int(self._pending_aug.get('MOTION_BLUR_LIMIT', 3)))
+            _safe_set('median_blur_spin', int(self._pending_aug.get('MEDIAN_BLUR_LIMIT', 3)))
+        except Exception:
+            # Без фатального исключения — просто логируем (print) и продолжаем
+            try:
+                print("Warning: _load_aug_widgets_from_cfg failed")
+            except Exception:
+                pass
+
