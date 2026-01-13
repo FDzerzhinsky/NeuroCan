@@ -5,10 +5,16 @@ from training.trainer import CanRotationTrainer
 from config.config import cfg
 from pathlib import Path
 
+import numpy as np
+import cv2
+import albumentations as A
+
 
 class TrainingWorker(QThread):
     # epoch, train_loss, val_loss, train_acc, val_acc
     epoch_signal = Signal(int, float, float, float, float)
+    # Передаём примеры аугментаций (словарь: type-> {'before':ndarray, 'after':ndarray, 'params': dict})
+    augmentations_signal = Signal(object)
 
     def __init__(self, dataset_path, epochs, batch_size, lr, parent=None):
         super().__init__(parent)
@@ -18,6 +24,187 @@ class TrainingWorker(QThread):
         self.lr = lr
         self._stop_requested = False
         self.trainer = None
+
+    def _generate_aug_examples(self, dataset, max_examples=6, preview_only: bool = False):
+        """
+        Генерируем примеры аугментаций используя настройки из cfg.
+        Если preview_only=True — проигрываем режим "холостой генерации":
+          - вероятность каждой аугментации считается как 1 (все типы генерируются),
+          - параметры выставляются в максимальные значения из cfg (не случайные).
+        Возвращаем dict: ключ — строка типа аугментации, значение — dict {'before','after','params'}.
+        """
+        examples = {}
+        n_samples = len(dataset)
+        if n_samples == 0:
+            return examples
+        idxs = np.random.choice(np.arange(n_samples), size=min(max_examples, n_samples), replace=False)
+
+        from data.transforms import TiltAugmentation
+
+        for idx in idxs:
+            try:
+                img_path, _ = dataset.samples[idx]
+                img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    continue
+                img_hwc = np.expand_dims(img, axis=-1)
+                h, w = img_hwc.shape[:2]
+
+                # PREVIEW MODE: force generation and max params
+                if preview_only:
+                    # 1) Tilt (force if configured)
+                    if 'tilt' not in examples and getattr(cfg, 'MAX_TILT_ANGLE', 0) != 0:
+                        max_angle = getattr(cfg, 'MAX_TILT_ANGLE', 0)
+                        angle = float(max_angle)
+                        after = TiltAugmentation.apply_tilt(img_hwc.copy(), max_angle=max_angle, angle=angle)
+                        examples['tilt'] = {'before': img_hwc.copy(), 'after': after.astype(np.uint8), 'params': {'angle': float(angle)}}
+
+                    # 2) Vertical shift (force)
+                    if 'vertical_shift' not in examples and getattr(cfg, 'VERTICAL_SHIFT_PERCENT', 0.0) != 0:
+                        max_shift_percent = getattr(cfg, 'VERTICAL_SHIFT_PERCENT', 0.0)
+                        shift_percent = float(max_shift_percent)
+                        shift_pixels = int(round(shift_percent * h))
+                        M = np.float32([[1, 0, 0], [0, 1, shift_pixels]])
+                        after = cv2.warpAffine(img_hwc.copy(), M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+                        examples['vertical_shift'] = {'before': img_hwc.copy(), 'after': after.astype(np.uint8), 'params': {'shift_percent': float(shift_percent), 'shift_pixels': int(shift_pixels)}}
+
+                    # 3) Color (use gamma max)
+                    if 'color' not in examples:
+                        gmin, gmax = getattr(cfg, 'GAMMA_LIMIT', (80, 120))
+                        gamma = float(gmax / 100.0)
+                        arr = img_hwc.astype(np.float32) / 255.0
+                        arr = np.power(arr, gamma)
+                        after = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+                        examples['color'] = {'before': img_hwc.copy(), 'after': after, 'params': {'method': 'gamma', 'gamma': float(gamma)}}
+
+                    # 4a) Gauss noise (max sigma)
+                    if 'gauss_noise' not in examples:
+                        gmin, gmax = getattr(cfg, 'GAUSS_NOISE_VAR', (10.0, 50.0))
+                        sigma = float(gmax)
+                        noise = np.random.normal(0, sigma, img_hwc.shape).astype(np.float32)
+                        after = np.clip(img_hwc.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+                        examples['gauss_noise'] = {'before': img_hwc.copy(), 'after': after, 'params': {'sigma': float(sigma)}}
+
+                    # 4b) Motion blur (max k)
+                    if 'motion_blur' not in examples:
+                        limit = max(1, int(getattr(cfg, 'MOTION_BLUR_LIMIT', 3)))
+                        k = int(limit)
+                        if k % 2 == 0:
+                            k = max(1, k - 1)
+                        if k <= 1:
+                            after = img_hwc.copy()
+                        else:
+                            kernel = np.zeros((k, k), dtype=np.float32)
+                            kernel[k // 2, :] = np.ones(k, dtype=np.float32)
+                            kernel = kernel / k
+                            after = cv2.filter2D(img_hwc, -1, kernel)
+                        examples['motion_blur'] = {'before': img_hwc.copy(), 'after': after.astype(np.uint8), 'params': {'ksize': int(k)}}
+
+                    # 4c) Median blur (max k)
+                    if 'median_blur' not in examples:
+                        limit = max(1, int(getattr(cfg, 'MEDIAN_BLUR_LIMIT', 3)))
+                        k = int(limit)
+                        if k % 2 == 0:
+                            k = max(1, k - 1)
+                        if k <= 1:
+                            after = img_hwc.copy()
+                        else:
+                            ch = img_hwc[:, :, 0]
+                            res = cv2.medianBlur(ch, k)
+                            after = np.expand_dims(res, axis=-1)
+                        examples['median_blur'] = {'before': img_hwc.copy(), 'after': after.astype(np.uint8), 'params': {'ksize': int(k)}}
+
+                    # If got all desired types — break
+                    if len(examples) >= 6:
+                        break
+
+                    # continue to next sample
+                    continue
+
+                # --- NORMAL TRAINING MODE (randomized) ---
+                # 1) Tilt
+                if 'tilt' not in examples and getattr(cfg, 'AUG_P_TILT', 0.0) > 0 and np.random.rand() < float(getattr(cfg, 'AUG_P_TILT', 0.0)):
+                    max_angle = getattr(cfg, 'MAX_TILT_ANGLE', 0)
+                    # выбранный угол — детерминируем здесь
+                    angle = float(np.random.uniform(-max_angle, max_angle)) if max_angle != 0 else 0.0
+                    after = TiltAugmentation.apply_tilt(img_hwc.copy(), max_angle=max_angle, angle=angle)
+                    examples['tilt'] = {'before': img_hwc.copy(), 'after': after.astype(np.uint8), 'params': {'angle': float(angle)}}
+
+                # 2) Vertical shift
+                if 'vertical_shift' not in examples and getattr(cfg, 'AUG_P_VERTICAL', 0.0) > 0 and np.random.rand() < float(getattr(cfg, 'AUG_P_VERTICAL', 0.0)):
+                    max_shift_percent = getattr(cfg, 'VERTICAL_SHIFT_PERCENT', 0.0)
+                    if max_shift_percent != 0:
+                        shift_percent = float(np.random.uniform(-max_shift_percent, max_shift_percent))
+                        shift_pixels = int(round(shift_percent * h))
+                        M = np.float32([[1, 0, 0], [0, 1, shift_pixels]])
+                        after = cv2.warpAffine(img_hwc.copy(), M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+                        examples['vertical_shift'] = {'before': img_hwc.copy(), 'after': after.astype(np.uint8), 'params': {'shift_percent': float(shift_percent), 'shift_pixels': int(shift_pixels)}}
+
+                # 3) Color (Gamma or Brightness/Contrast)
+                if 'color' not in examples and getattr(cfg, 'AUG_P_COLOR', 0.0) > 0 and np.random.rand() < float(getattr(cfg, 'AUG_P_COLOR', 0.0)):
+                    # выбирам либо gamma либо brightness/contrast
+                    if np.random.rand() < 0.5:
+                        # gamma: cfg.GAMMA_LIMIT — tuple (min,max) e.g. (80,120) -> 0.8..1.2
+                        gmin, gmax = getattr(cfg, 'GAMMA_LIMIT', (80, 120))
+                        gamma = float(np.random.uniform(gmin / 100.0, gmax / 100.0))
+                        arr = img_hwc.astype(np.float32) / 255.0
+                        arr = np.power(arr, gamma)
+                        after = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+                        examples['color'] = {'before': img_hwc.copy(), 'after': after, 'params': {'method': 'gamma', 'gamma': float(gamma)}}
+                    else:
+                        b_limit = getattr(cfg, 'BRIGHTNESS_LIMIT', 0.1)
+                        c_limit = getattr(cfg, 'CONTRAST_LIMIT', 0.1)
+                        brightness = float(np.random.uniform(-b_limit, b_limit))
+                        contrast = float(np.random.uniform(-c_limit, c_limit))
+                        beta = int(round(brightness * 255.0))
+                        alpha = 1.0 + contrast
+                        after = np.clip(alpha * img_hwc.astype(np.float32) + beta, 0, 255).astype(np.uint8)
+                        examples['color'] = {'before': img_hwc.copy(), 'after': after, 'params': {'method': 'brightness_contrast', 'brightness': float(brightness), 'contrast': float(contrast)}}
+
+                # 4) Noise / Blur
+                if 'gauss_noise' not in examples and getattr(cfg, 'AUG_P_NOISE', 0.0) > 0 and np.random.rand() < float(getattr(cfg, 'AUG_P_NOISE', 0.0)):
+                    r = np.random.rand()
+                    if r < 0.4:
+                        # Gauss noise: варьируем sigma
+                        gmin, gmax = getattr(cfg, 'GAUSS_NOISE_VAR', (10.0, 50.0))
+                        sigma = float(np.random.uniform(gmin, gmax))
+                        noise = np.random.normal(0, sigma, img_hwc.shape).astype(np.float32)
+                        after = np.clip(img_hwc.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+                        examples['gauss_noise'] = {'before': img_hwc.copy(), 'after': after, 'params': {'sigma': float(sigma)}}
+                    elif r < 0.7:
+                        # Motion blur: choose odd kernel size between 3 and MOTION_BLUR_LIMIT
+                        limit = max(1, int(getattr(cfg, 'MOTION_BLUR_LIMIT', 3)))
+                        k = int(np.random.randint(1, limit + 1))
+                        if k % 2 == 0:
+                            k = max(1, k - 1)
+                        if k <= 1:
+                            after = img_hwc.copy()
+                        else:
+                            kernel = np.zeros((k, k), dtype=np.float32)
+                            kernel[k // 2, :] = np.ones(k, dtype=np.float32)
+                            kernel = kernel / k
+                            after = cv2.filter2D(img_hwc, -1, kernel)
+                        examples['motion_blur'] = {'before': img_hwc.copy(), 'after': after.astype(np.uint8), 'params': {'ksize': int(k)}}
+                    else:
+                        limit = max(1, int(getattr(cfg, 'MEDIAN_BLUR_LIMIT', 3)))
+                        k = int(np.random.randint(1, limit + 1))
+                        if k % 2 == 0:
+                            k = max(1, k - 1)
+                        if k <= 1:
+                            after = img_hwc.copy()
+                        else:
+                            ch = img_hwc[:, :, 0]
+                            res = cv2.medianBlur(ch, k)
+                            after = np.expand_dims(res, axis=-1)
+                        examples['median_blur'] = {'before': img_hwc.copy(), 'after': after.astype(np.uint8), 'params': {'ksize': int(k)}}
+
+                # Если набрали все примеры — выйти
+                if len(examples) >= 6:
+                    break
+            except Exception:
+                continue
+
+        return examples
 
     def run(self):
         # Ensure dirs
@@ -83,7 +270,6 @@ class TrainingWorker(QThread):
             except Exception:
                 pass
 
-            # Сохранение лучшей модели
             # Новая логика сохранения: сохраняем, если ИЛИ улучшилась accuracy, ИЛИ уменьшился val_loss
             improved_acc = val_acc > getattr(self.trainer, 'best_accuracy', 0.0)
             improved_loss = val_loss < getattr(self.trainer, 'best_val_loss', float('inf'))
@@ -98,6 +284,14 @@ class TrainingWorker(QThread):
                     self.trainer.save_checkpoint(epoch, is_best_acc=improved_acc, is_best_loss=improved_loss)
                 except Exception:
                     pass
+
+            # Генерируем примеры аугментаций и эмитим сигнал в GUI-поток
+            try:
+                examples = self._generate_aug_examples(dataset)
+                # Emit examples (словарь numpy-arrays with params)
+                self.augmentations_signal.emit(examples)
+            except Exception:
+                pass
 
             # Эмиссия сигнала с актуальными метриками
             train_loss = getattr(self.trainer, 'last_train_loss', train_loss)

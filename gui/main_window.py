@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, Q
                                QFileDialog, QTabWidget, QFormLayout, QLineEdit, QSpinBox,
                                QMessageBox, QListWidget, QProgressDialog, QListWidgetItem, QAbstractItemView)
 from PySide6.QtCore import Slot, QTimer, Qt, Signal
+from PySide6.QtGui import QImage, QPixmap
 from .training_worker import TrainingWorker
 from utils.onnx_tools import list_checkpoints, export_checkpoint_to_onnx
 from config.config import cfg
@@ -145,7 +146,7 @@ class MainWindow(QMainWindow):
         # Новая вкладка для параметров аугментации (вынесена из training tab)
         tab = QWidget()
         layout = QVBoxLayout()
-        from PySide6.QtWidgets import QGroupBox, QDoubleSpinBox
+        from PySide6.QtWidgets import QGroupBox, QDoubleSpinBox, QHBoxLayout, QLabel
 
         # Инициализируем pending-словарь значениями из cfg
         # Попробуем заново загрузить пользовательский файл конфигурации (на случай, если он был создан после старта)
@@ -280,7 +281,91 @@ class MainWindow(QMainWindow):
         aug_form.addRow('Median blur limit:', self.median_blur_spin)
 
         aug_group.setLayout(aug_form)
+
+        # Раздел: визуализация примеров аугментаций (под формой)
+        from PySide6.QtWidgets import QGroupBox, QTextEdit, QPushButton, QScrollArea, QSizePolicy
+
+        # Порядок типов аугментаций для отображения
+        aug_types = ['tilt', 'vertical_shift', 'color', 'gauss_noise', 'motion_blur', 'median_blur']
+
+        # Контейнер для фреймов аугментаций
+        vis_container = QWidget()
+        vis_layout = QHBoxLayout(); vis_layout.setContentsMargins(0,0,0,0); vis_layout.setSpacing(6)
+        vis_container.setLayout(vis_layout)
+
+        self._aug_widgets = {}
+        for aug in aug_types:
+            gb = QGroupBox(aug.replace('_', ' ').title())
+            gb_l = QVBoxLayout(); gb_l.setContentsMargins(6,6,6,6)
+
+            # Изображения (до / после)
+            imgs_row = QWidget(); imgs_row_l = QHBoxLayout(); imgs_row_l.setContentsMargins(0,0,0,0)
+            before_lbl = QLabel('До')
+            # Размер предпросмотра на основе cfg.INPUT_SIZE (INPUT_SIZE = (height, width))
+            try:
+                in_h, in_w = getattr(cfg, 'INPUT_SIZE', (256, 536))
+                # --- SCALING FACTOR: используем значение из cfg.PREVIEW_SCALE ---
+                # Изменяйте PREVIEW_SCALE в config/config.py при необходимости.
+                PREVIEW_SCALE = float(getattr(cfg, 'PREVIEW_SCALE', 1.0/3.0))
+                # Консервативно сохраняем текущую swap-логику (preview_w = in_h, preview_h = in_w)
+                raw_preview_w = int(in_h)
+                raw_preview_h = int(in_w)
+                # Применяем масштаб
+                preview_w = max(1, int(raw_preview_w * PREVIEW_SCALE))
+                preview_h = max(1, int(raw_preview_h * PREVIEW_SCALE))
+            except Exception:
+                # запасные значения (ширина, высота) с применённым PREVIEW_SCALE
+                PREVIEW_SCALE = 1.0 / 3.0
+                preview_w, preview_h = max(1, int(256 * PREVIEW_SCALE)), max(1, int(536 * PREVIEW_SCALE))
+            before_lbl.setFixedSize(preview_w, preview_h)
+            before_lbl.setStyleSheet('background: #111; border: 1px solid #222')
+            before_lbl.setAlignment(Qt.AlignCenter)
+            after_lbl = QLabel('После')
+            after_lbl.setFixedSize(preview_w, preview_h)
+            after_lbl.setStyleSheet('background: #111; border: 1px solid #222')
+            after_lbl.setAlignment(Qt.AlignCenter)
+            imgs_row_l.addWidget(before_lbl)
+            imgs_row_l.addWidget(after_lbl)
+            imgs_row.setLayout(imgs_row_l)
+
+            # Параметры
+            params_lbl = QTextEdit()
+            params_lbl.setReadOnly(True)
+            params_lbl.setFixedHeight(60)
+
+            # Кнопка открытия полноразмерного просмотра
+            open_btn = QPushButton('Открыть')
+            open_btn.setEnabled(False)
+
+            gb_l.addWidget(imgs_row)
+            gb_l.addWidget(QLabel('Параметры:'))
+            gb_l.addWidget(params_lbl)
+            gb_l.addWidget(open_btn)
+            gb.setLayout(gb_l)
+
+            vis_layout.addWidget(gb)
+
+            self._aug_widgets[aug] = {
+                'group': gb,
+                'before': before_lbl,
+                'after': after_lbl,
+                'params': params_lbl,
+                'open': open_btn,
+            }
+
+            # Привяжем обработчик открытия диалога (замыкание сохраняет aug)
+            def _make_handler(a):
+                return lambda: self._show_full_aug_dialog(a)
+            open_btn.clicked.connect(_make_handler(aug))
+
+        # Обёртка с прокруткой на случай узкого экрана
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(vis_container)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         layout.addWidget(aug_group)
+        layout.addWidget(scroll)
 
         # После создания виджетов — подгрузим свежие значения из cfg
         self._load_aug_widgets_from_cfg()
@@ -319,6 +404,12 @@ class MainWindow(QMainWindow):
 
         apply_btn.clicked.connect(_apply_augmentations)
         apply_row_l.addStretch(1)
+        # Кнопка генерации превью без обучения
+        gen_btn = QPushButton('Сгенерировать превью')
+        def _gen_now():
+            self._generate_preview_now()
+        gen_btn.clicked.connect(_gen_now)
+        apply_row_l.addWidget(gen_btn)
         apply_row_l.addWidget(apply_btn)
         apply_row.setLayout(apply_row_l)
         layout.addWidget(apply_row)
@@ -326,6 +417,13 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         tab.setLayout(layout)
         self.tabs.addTab(tab, 'Аугментации')
+
+        # Подписка на сигнал с примерами аугментаций из worker'а
+        try:
+            # подписка будет установлена при старте worker'а: смотрите _start_training
+            pass
+        except Exception:
+            pass
 
     def _build_inference_tab(self):
         tab = QWidget()
@@ -392,6 +490,11 @@ class MainWindow(QMainWindow):
         self.worker = TrainingWorker(dataset_path, epochs, batch, lr)
         # Подключаем сигнал с пятью параметрами: epoch, train_loss, val_loss, train_acc, val_acc
         self.worker.epoch_signal.connect(self._on_epoch)
+        # Подписываемся на получение примеров аугментаций
+        try:
+            self.worker.augmentations_signal.connect(self._on_augmentation_examples)
+        except Exception:
+            pass
         self.worker.finished.connect(self._on_finished)
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -765,3 +868,166 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    @Slot(object)
+    def _on_augmentation_examples(self, examples):
+        """Обновляет превью аугментаций в вкладке 'Аугментации'.
+        Ожидается словарь {name: {'before':arr,'after':arr,'params':{}}}.
+        """
+        try:
+            if not hasattr(self, '_aug_widgets'):
+                return
+            # Ожидаемые типы в порядке отображения
+            aug_order = ['tilt', 'vertical_shift', 'color', 'gauss_noise', 'motion_blur', 'median_blur']
+            for aug in aug_order:
+                w = self._aug_widgets.get(aug)
+                if w is None:
+                    continue
+                data = examples.get(aug)
+                if data is None:
+                    # очистить
+                    try:
+                        w['before'].clear(); w['before'].setText('До')
+                        w['after'].clear(); w['after'].setText('После')
+                        w['params'].setPlainText('')
+                        w['open'].setEnabled(False)
+                        if 'data' in w:
+                            del w['data']
+                    except Exception:
+                        pass
+                    continue
+
+                before = data.get('before')
+                after = data.get('after')
+                params = data.get('params', {})
+
+                def to_qpixmap(arr, target_w, target_h):
+                    img = arr.astype('uint8')
+                    if img.ndim == 3 and img.shape[2] == 1:
+                        img2 = img[:, :, 0]
+                    elif img.ndim == 2:
+                        img2 = img
+                    else:
+                        img2 = img[:, :, 0]
+                    h, w0 = img2.shape[:2]
+                    bytes_per_line = w0
+                    qimg = QImage(img2.data.tobytes(), w0, h, bytes_per_line, QImage.Format_Grayscale8)
+                    pix = QPixmap.fromImage(qimg)
+                    pix = pix.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    return pix
+
+                try:
+                    pb = to_qpixmap(before, w['before'].width(), w['before'].height())
+                    pa = to_qpixmap(after, w['after'].width(), w['after'].height())
+                    w['before'].setPixmap(pb)
+                    w['after'].setPixmap(pa)
+                except Exception:
+                    try:
+                        w['before'].setText('Ошибка')
+                        w['after'].setText('Ошибка')
+                    except Exception:
+                        pass
+
+                # Параметры — форматируем красиво
+                lines = []
+                for k, v in params.items():
+                    lines.append(f"{k}: {v}")
+                try:
+                    w['params'].setPlainText('\n'.join(lines))
+                except Exception:
+                    pass
+                w['open'].setEnabled(True)
+                # Сохраняем данные для показа в диалоге
+                w['data'] = data
+        except Exception as e:
+            print(f"[MAIN WINDOW] Error updating augmentation previews: {e}")
+
+    def _generate_preview_now(self):
+        """Сгенерировать примеры аугментаций немедленно, без старта обучения.
+        Используется текущая папка из поля `dataset_path_edit`.
+        """
+        try:
+            dataset_path = self.dataset_path_edit.text().strip()
+            if not dataset_path:
+                QMessageBox.warning(self, 'Превью', 'Пожалуйста, укажите папку с датасетом в верхней форме')
+                return
+            # Создадим временный датасет и вызовем генератор примеров из TrainingWorker
+            from data.dataset import SodaCanDataset
+            from data.transforms import get_transforms
+            ds = SodaCanDataset(dataset_path, labels_file=None, phase='train', transform=get_transforms('train'))
+            # Используем экземпляр TrainingWorker, чтобы воспользоваться _generate_aug_examples
+            tw = TrainingWorker(dataset_path, 1, 1, float(self.lr_edit.text() or cfg.LEARNING_RATE))
+            examples = tw._generate_aug_examples(ds, preview_only=True)
+            # Обновляем GUI
+            QTimer.singleShot(0, lambda: self._on_augmentation_examples(examples))
+        except Exception as e:
+            QMessageBox.critical(self, 'Ошибка генерации превью', f'Не удалось сгенерировать превью: {e}')
+
+    def _show_full_aug_dialog(self, aug_name):
+        """Открывает диалог с полноразмерными изображениями для выбранной аугментации."""
+        try:
+            w = self._aug_widgets.get(aug_name)
+            if not w or 'data' not in w:
+                QMessageBox.information(self, 'Превью', 'Нет данных для выбранной аугментации')
+                return
+            data = w['data']
+            before = data.get('before'); after = data.get('after'); params = data.get('params', {})
+
+            from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle(f'Превью: {aug_name.replace("_", " ").title()}')
+            dlg_l = QVBoxLayout()
+
+            # Images side by side
+            row = QWidget(); row_l = QHBoxLayout(); row_l.setContentsMargins(0,0,0,0)
+            lbl_before = QLabel(); lbl_after = QLabel()
+            lbl_before.setAlignment(Qt.AlignCenter); lbl_after.setAlignment(Qt.AlignCenter)
+
+            # Convert full-size
+            def _pix(arr):
+                img = arr.astype('uint8')
+                if img.ndim == 3 and img.shape[2] == 1:
+                    img2 = img[:, :, 0]
+                elif img.ndim == 2:
+                    img2 = img
+                else:
+                    img2 = img[:, :, 0]
+                h, w0 = img2.shape[:2]
+                bytes_per_line = w0
+                qimg = QImage(img2.data.tobytes(), w0, h, bytes_per_line, QImage.Format_Grayscale8)
+                return QPixmap.fromImage(qimg)
+
+            try:
+                pb = _pix(before)
+                pa = _pix(after)
+                # Ограничим максимальный размер окна
+                max_w = min(pb.width(), 1200)
+                max_h = min(pb.height(), 900)
+                lbl_before.setPixmap(pb.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                lbl_after.setPixmap(pa.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            except Exception:
+                lbl_before.setText('Ошибка')
+                lbl_after.setText('Ошибка')
+
+            row_l.addWidget(lbl_before); row_l.addWidget(lbl_after)
+            row.setLayout(row_l)
+            dlg_l.addWidget(row)
+
+            # Params
+            params_txt = QWidget()
+            params_layout = QVBoxLayout(); params_layout.setContentsMargins(0,0,0,0)
+            params_lbl = QLabel('\n'.join([f"{k}: {v}" for k, v in params.items()]))
+            params_layout.addWidget(params_lbl)
+            params_txt.setLayout(params_layout)
+            dlg_l.addWidget(QLabel('Параметры:'))
+            dlg_l.addWidget(params_txt)
+
+            # Buttons
+            buttons = QDialogButtonBox(QDialogButtonBox.Close)
+            buttons.rejected.connect(dlg.reject)
+            dlg_l.addWidget(buttons)
+
+            dlg.setLayout(dlg_l)
+            dlg.exec()
+        except Exception as e:
+            print(f"_show_full_aug_dialog error: {e}")
