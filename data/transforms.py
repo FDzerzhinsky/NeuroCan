@@ -31,6 +31,81 @@ def _vert_wrapper(img, **kwargs):
     return _vertical_shift(img, max_shift_percent=cfg.VERTICAL_SHIFT_PERCENT)
 
 
+# === Новые вспомогательные функции для детерминированного/рандомного применения отдельных аугментаций ===
+def apply_gamma_random(image, gmin=None, gmax=None):
+    """Применяет случайный gamma из диапазона cfg.GAMMA_LIMIT. Возвращает (img, params)."""
+    if gmin is None or gmax is None:
+        gmin, gmax = getattr(cfg, 'GAMMA_LIMIT', (80, 120))
+    gamma = float(np.random.uniform(gmin / 100.0, gmax / 100.0))
+    arr = image.astype(np.float32) / 255.0
+    arr = np.power(arr, gamma)
+    after = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+    return after, {'method': 'gamma', 'gamma': float(gamma)}
+
+
+def apply_brightness_contrast_random(image, b_limit=None, c_limit=None):
+    """Применяет случайную яркость/контраст в пределах лимитов. Возвращает (img, params)."""
+    if b_limit is None:
+        b_limit = getattr(cfg, 'BRIGHTNESS_LIMIT', 0.1)
+    if c_limit is None:
+        c_limit = getattr(cfg, 'CONTRAST_LIMIT', 0.1)
+    brightness = float(np.random.uniform(-b_limit, b_limit))
+    contrast = float(np.random.uniform(-c_limit, c_limit))
+    beta = int(round(brightness * 255.0))
+    alpha = 1.0 + contrast
+    after = np.clip(alpha * image.astype(np.float32) + beta, 0, 255).astype(np.uint8)
+    return after, {'method': 'brightness_contrast', 'brightness': float(brightness), 'contrast': float(contrast)}
+
+
+def apply_gauss_noise_random(image, var_min=None, var_max=None):
+    if var_min is None or var_max is None:
+        var_min, var_max = getattr(cfg, 'GAUSS_NOISE_VAR', (10.0, 50.0))
+    sigma = float(np.random.uniform(var_min, var_max))
+    noise = np.random.normal(0, sigma, image.shape).astype(np.float32)
+    after = np.clip(image.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+    return after, {'sigma': float(sigma)}
+
+
+def apply_motion_blur_random(image, limit=None):
+    if limit is None:
+        limit = int(getattr(cfg, 'MOTION_BLUR_LIMIT', 3))
+    limit = max(1, int(limit))
+    k = int(np.random.randint(1, limit + 1))
+    if k % 2 == 0:
+        k = max(1, k - 1)
+    if k <= 1:
+        return image, {'ksize': int(k)}
+    kernel = np.zeros((k, k), dtype=np.float32)
+    kernel[k // 2, :] = np.ones(k, dtype=np.float32)
+    kernel = kernel / k
+    after = cv2.filter2D(image, -1, kernel)
+    return after, {'ksize': int(k)}
+
+
+def apply_median_blur_random(image, limit=None):
+    if limit is None:
+        limit = int(getattr(cfg, 'MEDIAN_BLUR_LIMIT', 3))
+    limit = max(1, int(limit))
+    k = int(np.random.randint(1, limit + 1))
+    if k % 2 == 0:
+        k = max(1, k - 1)
+    if k <= 1:
+        return image, {'ksize': int(k)}
+    ch = image[:, :, 0] if image.ndim == 3 else image
+    res = cv2.medianBlur(ch, k)
+    after = np.expand_dims(res, axis=-1)
+    return after, {'ksize': int(k)}
+
+
+def apply_color_random(image):
+    """Выбирает либо gamma либо brightness/contrast, применяет и возвращает (img, params)."""
+    if np.random.rand() < 0.5:
+        return apply_gamma_random(image)
+    else:
+        return apply_brightness_contrast_random(image)
+
+
+# === Продолжение: get_transforms и TiltAugmentation как было ===
 def get_transforms(phase='train'):
     """
     Возвращает трансформы для обучения/валидации

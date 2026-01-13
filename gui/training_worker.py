@@ -230,8 +230,39 @@ class TrainingWorker(QThread):
         val_size = len(dataset) - train_size
         train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
+        # Устанавливаем трансформы для каждой части
         train_dataset.dataset.transform = get_transforms('train')
         val_dataset.dataset.transform = get_transforms('val')
+
+        # Генерируем дополнительные augmented entries только для train subset,
+        # чтобы не допустить утечки аугментированных примеров в валидацию.
+        try:
+            # Subset имеет атрибут индексов (список индексов оригинального датасета)
+            train_indices = getattr(train_dataset, 'indices', None)
+            if train_indices is not None and hasattr(train_dataset.dataset, 'generate_augmented_entries_for_indices'):
+                train_dataset.dataset.generate_augmented_entries_for_indices(train_indices)
+                # Теперь добавим индексы сгенерированных аугментированных записей в сам Subset.indices,
+                # чтобы DataLoader включал их в train_dataset.
+                aug_count = len(train_dataset.dataset.augmented_entries)
+                if aug_count > 0:
+                    base = len(train_dataset.dataset.samples)
+                    aug_indices = list(range(base, base + aug_count))
+                    # расширяем существующие индексы
+                    try:
+                        train_dataset.indices = list(train_dataset.indices) + aug_indices
+                    except Exception:
+                        # на всякий случай — если нет доступа для записи, игнорируем
+                        pass
+                # Краткая консольная сводка (наглядно): originals/generated/total
+                try:
+                    originals = len(train_indices) if train_indices is not None else len(train_dataset.dataset.samples)
+                    generated = len(train_dataset.dataset.augmented_entries)
+                    total_now = len(train_dataset.dataset)
+                    print(f"[Augmentation summary] originals={originals}, generated={generated}, total={total_now}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=cfg.NUM_WORKERS)
         val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=cfg.NUM_WORKERS)

@@ -52,8 +52,16 @@ class Config:
     AUG_P_VERTICAL = 0.8
     AUG_P_COLOR = 0.5
     AUG_P_NOISE = 0.3
-    # Вероятность применения тильта (поворота) в датасете
+    # Вероятность применения тильта (поворота) в датасете (используется при обучении как вероятность)
     AUG_P_TILT = 0.8
+
+    # --- Добавляемая доля аугментированных образцов (в процентах или долях) ---
+    # Если задать 30 — значит к N исходных добавится 30 новых аугментированных образцов данного типа.
+    # Поддерживается формат 0..1 (доля) или 0..100 (процент). По умолчанию инициализируем из вероятностей для обратной совместимости.
+    AUG_ADD_PCT_TILT = AUG_P_TILT * 100.0 if AUG_P_TILT <= 1.0 else AUG_P_TILT
+    AUG_ADD_PCT_VERTICAL = AUG_P_VERTICAL * 100.0 if AUG_P_VERTICAL <= 1.0 else AUG_P_VERTICAL
+    AUG_ADD_PCT_COLOR = AUG_P_COLOR * 100.0 if AUG_P_COLOR <= 1.0 else AUG_P_COLOR
+    AUG_ADD_PCT_NOISE = AUG_P_NOISE * 100.0 if AUG_P_NOISE <= 1.0 else AUG_P_NOISE
 
     # Дополнительные параметры аугментаций (извлечены из transforms)
     # Gamma limits — в формате (min, max) те же числа, что в оригинале (80..120)
@@ -124,6 +132,7 @@ class Config:
         if keys is None:
             keys = [
                 'MAX_TILT_ANGLE', 'VERTICAL_SHIFT_PERCENT', 'AUG_P_VERTICAL', 'AUG_P_COLOR', 'AUG_P_NOISE', 'AUG_P_TILT',
+                'AUG_ADD_PCT_TILT', 'AUG_ADD_PCT_VERTICAL', 'AUG_ADD_PCT_COLOR', 'AUG_ADD_PCT_NOISE',
                 'GAMMA_LIMIT', 'BRIGHTNESS_LIMIT', 'CONTRAST_LIMIT', 'GAUSS_NOISE_VAR', 'MOTION_BLUR_LIMIT', 'MEDIAN_BLUR_LIMIT'
             ]
         data = {}

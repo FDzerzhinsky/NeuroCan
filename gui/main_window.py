@@ -168,6 +168,11 @@ class MainWindow(QMainWindow):
             'GAUSS_NOISE_VAR': tuple(getattr(cfg, 'GAUSS_NOISE_VAR')),
             'MOTION_BLUR_LIMIT': int(getattr(cfg, 'MOTION_BLUR_LIMIT')),
             'MEDIAN_BLUR_LIMIT': int(getattr(cfg, 'MEDIAN_BLUR_LIMIT')),
+            # Add-percent fields
+            'AUG_ADD_PCT_TILT': float(getattr(cfg, 'AUG_ADD_PCT_TILT', 0.0)),
+            'AUG_ADD_PCT_VERTICAL': float(getattr(cfg, 'AUG_ADD_PCT_VERTICAL', 0.0)),
+            'AUG_ADD_PCT_COLOR': float(getattr(cfg, 'AUG_ADD_PCT_COLOR', 0.0)),
+            'AUG_ADD_PCT_NOISE': float(getattr(cfg, 'AUG_ADD_PCT_NOISE', 0.0)),
         }
 
         aug_group = QGroupBox('Параметры аугментации')
@@ -210,6 +215,27 @@ class MainWindow(QMainWindow):
         self.aug_p_tilt_spin.setValue(self._pending_aug['AUG_P_TILT'])
         self.aug_p_tilt_spin.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_P_TILT': float(v)}))
         aug_form.addRow('P тильта (поворота):', self.aug_p_tilt_spin)
+
+        # Добавлять — проценты добавленных аугментов (AUG_ADD_PCT_*)
+        self.add_pct_tilt = QDoubleSpinBox(); self.add_pct_tilt.setDecimals(2); self.add_pct_tilt.setRange(0.0, 100.0); self.add_pct_tilt.setSingleStep(1.0)
+        self.add_pct_tilt.setValue(self._pending_aug.get('AUG_ADD_PCT_TILT', 0.0))
+        self.add_pct_tilt.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_ADD_PCT_TILT': float(v)}))
+        aug_form.addRow('Добавить % тильт-образов:', self.add_pct_tilt)
+
+        self.add_pct_vert = QDoubleSpinBox(); self.add_pct_vert.setDecimals(2); self.add_pct_vert.setRange(0.0, 100.0); self.add_pct_vert.setSingleStep(1.0)
+        self.add_pct_vert.setValue(self._pending_aug.get('AUG_ADD_PCT_VERTICAL', 0.0))
+        self.add_pct_vert.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_ADD_PCT_VERTICAL': float(v)}))
+        aug_form.addRow('Добавить % вертикальных сдвигов:', self.add_pct_vert)
+
+        self.add_pct_color = QDoubleSpinBox(); self.add_pct_color.setDecimals(2); self.add_pct_color.setRange(0.0, 100.0); self.add_pct_color.setSingleStep(1.0)
+        self.add_pct_color.setValue(self._pending_aug.get('AUG_ADD_PCT_COLOR', 0.0))
+        self.add_pct_color.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_ADD_PCT_COLOR': float(v)}))
+        aug_form.addRow('Добавить % цветовых аугмент.:', self.add_pct_color)
+
+        self.add_pct_noise = QDoubleSpinBox(); self.add_pct_noise.setDecimals(2); self.add_pct_noise.setRange(0.0, 100.0); self.add_pct_noise.setSingleStep(1.0)
+        self.add_pct_noise.setValue(self._pending_aug.get('AUG_ADD_PCT_NOISE', 0.0))
+        self.add_pct_noise.valueChanged.connect(lambda v: self._pending_aug.update({'AUG_ADD_PCT_NOISE': float(v)}))
+        aug_form.addRow('Добавить % шум/размытий:', self.add_pct_noise)
 
         # --- Дополнительные параметры, извлечённые из transforms.py и config.cfg ---
         # Gamma limits (min,max)
@@ -389,6 +415,11 @@ class MainWindow(QMainWindow):
                 cfg.GAUSS_NOISE_VAR = tuple(self._pending_aug['GAUSS_NOISE_VAR'])
                 cfg.MOTION_BLUR_LIMIT = int(self._pending_aug['MOTION_BLUR_LIMIT'])
                 cfg.MEDIAN_BLUR_LIMIT = int(self._pending_aug['MEDIAN_BLUR_LIMIT'])
+                # Add-percent fields
+                cfg.AUG_ADD_PCT_TILT = float(self._pending_aug.get('AUG_ADD_PCT_TILT', 0.0))
+                cfg.AUG_ADD_PCT_VERTICAL = float(self._pending_aug.get('AUG_ADD_PCT_VERTICAL', 0.0))
+                cfg.AUG_ADD_PCT_COLOR = float(self._pending_aug.get('AUG_ADD_PCT_COLOR', 0.0))
+                cfg.AUG_ADD_PCT_NOISE = float(self._pending_aug.get('AUG_ADD_PCT_NOISE', 0.0))
 
                 # Сохраняем изменения в файл для следующего запуска
                 try:
@@ -813,6 +844,11 @@ class MainWindow(QMainWindow):
                     'GAUSS_NOISE_VAR': tuple(getattr(cfg, 'GAUSS_NOISE_VAR')),
                     'MOTION_BLUR_LIMIT': int(getattr(cfg, 'MOTION_BLUR_LIMIT')),
                     'MEDIAN_BLUR_LIMIT': int(getattr(cfg, 'MEDIAN_BLUR_LIMIT')),
+                    # Add-percent fields
+                    'AUG_ADD_PCT_TILT': float(getattr(cfg, 'AUG_ADD_PCT_TILT', 0.0)),
+                    'AUG_ADD_PCT_VERTICAL': float(getattr(cfg, 'AUG_ADD_PCT_VERTICAL', 0.0)),
+                    'AUG_ADD_PCT_COLOR': float(getattr(cfg, 'AUG_ADD_PCT_COLOR', 0.0)),
+                    'AUG_ADD_PCT_NOISE': float(getattr(cfg, 'AUG_ADD_PCT_NOISE', 0.0)),
                 })
             except Exception:
                 # если чтение cfg не удалось — оставляем pending как есть
