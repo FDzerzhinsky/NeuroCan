@@ -17,7 +17,7 @@
   "CONTRAST_LIMIT": 0.2,
   "GAUSS_NOISE_VAR": [
     10.0,
-    60.0
+    59.0
   ],
   "MOTION_BLUR_LIMIT": 1,
   "MEDIAN_BLUR_LIMIT": 5
